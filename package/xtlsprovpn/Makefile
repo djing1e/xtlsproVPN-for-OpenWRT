@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 PKG_NAME:=xtlsprovpn
 PKG_VERSION:=1.0.0
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 PKG_LICENSE:=GPL-2.0-or-later MPL-2.0
 PKG_MAINTAINER:=xtlsproVPN
 include $(INCLUDE_DIR)/package.mk
@@ -35,12 +35,8 @@ define Package/xtlsprovpn/install
 	$(CP) ./files/. $(1)/
 endef
 
-define Package/xtlsprovpn/postinst
-#!/bin/sh
-[ -n "$${IPKG_INSTROOT}" ] && exit 0
-sh /etc/uci-defaults/99-xtlsprovpn || exit 1
-rm -f /etc/uci-defaults/99-xtlsprovpn
-exit 0
-endef
+# OpenWrt default_postinst runs and removes /etc/uci-defaults entries.
+# Do not invoke the one-shot initializer a second time.
+
 
 $(eval $(call BuildPackage,xtlsprovpn))
