@@ -117,8 +117,14 @@ finish() {
                     "$INSTALLED" "$AVAILABLE" || :
             fi
         else
-            ucode "$HELPER" record "$ACTION" error \
-                "Операция остановлена на этапе: $PHASE. Ядро не заменено. Кандидат сохранён в RAM на 30 минут." \
+            message="Операция остановлена на этапе: $PHASE. Ядро не заменено."
+            if [ "$FIRST_INSTALL" = 1 ]; then
+                message="$message Настройки DNS и маршрутов не менялись."
+            fi
+            if [ -f "$CACHE/xray" ]; then
+                message="$message В RAM есть кандидат; перед использованием он будет проверен повторно."
+            fi
+            ucode "$HELPER" record "$ACTION" error "$message" \
                 "$INSTALLED" "$AVAILABLE" || :
         fi
     fi
@@ -164,10 +170,14 @@ download_once() {
 fetch() {
     url=$1; output=$2; limit=$3
     rm -f "$output"
+    direct_timeout=180
+    if [ "$FIRST_INSTALL" = 1 ] && [ "$output" = "$WORK/core.zip" ]; then
+        direct_timeout=900
+    fi
     echo 'Загрузка напрямую...'
     if download_once "$output" direct -4 --http1.1 --silent --show-error --fail --location \
         --proto '=https' --proto-redir '=https' \
-        --noproxy '*' --connect-timeout 5 --max-time 180 --speed-limit 1024 --speed-time 20 \
+        --noproxy '*' --connect-timeout 5 --max-time "$direct_timeout" --speed-limit 1024 --speed-time 20 \
         --max-filesize "$limit" --output "$output" "$url"; then
         return 0
     fi

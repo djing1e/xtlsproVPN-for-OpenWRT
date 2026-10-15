@@ -26,3 +26,13 @@ listener/changed-node selection. These do not establish real-router recovery.
 Not yet completed: hardware tests with PPPoE/NetBird/TTL, process-kill/power-loss
 recovery journal, and proof of direct DNS restoration after every stop failure.
 Do not enable XHTTP on the router to test this branch yet. No installer is supplied.
+
+Cold-install safety additions:
+- bootstrap cleans partial staged binaries on failure and handled termination;
+- verify minimal config and copied binary before publication; reject symlink targets;
+- cold archive downloads allow up to 900 seconds; stalled downloads remain bounded;
+- UI errors no longer claim an unvalidated candidate was cached;
+- mocked bootstrap and UI failure tests cover download/digest failures, checksum,
+  malformed/truncated archive, wrong version, config rejection, space and copy errors.
+These tests guard network command calls; they do not prove router connectivity or
+recovery after SIGKILL/power loss. No router installation was performed.
