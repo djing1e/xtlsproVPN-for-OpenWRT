@@ -1,0 +1,5 @@
+#!/bin/sh
+case "$ACTION" in ifup|ifupdate|ifdown) ;; *) exit 0;; esac
+[ "$(uci -q get xray_core.general.transparent_proxy_enable)" = 1 ] || exit 0
+/etc/init.d/xray_core running >/dev/null 2>&1 || exit 0
+/usr/bin/xray-lab-local-policy up || logger -t xtlsproVPN 'Cannot refresh local TPROXY policy'

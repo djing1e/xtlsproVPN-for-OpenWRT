@@ -6,6 +6,7 @@ USE_PROCD=1
 NAME=xray_core
 
 setup_firewall() {
+    /usr/bin/xray-lab-local-policy up || return 1
     ip rule add pref 104 fwmark 251 lookup 251
     ip route add local default dev lo table 251
     ip -6 rule add pref 104 fwmark 251 lookup 251
@@ -19,6 +20,7 @@ setup_firewall() {
 }
 
 flush_firewall() {
+    /usr/bin/xray-lab-local-policy down || return 1
     ip rule del pref 104 fwmark 251 lookup 251
     ip route del local default dev lo table 251
     ip -6 rule del pref 104 fwmark 251 lookup 251
