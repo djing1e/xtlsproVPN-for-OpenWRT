@@ -20,7 +20,7 @@ Implemented here:
 - exclude only priority-103 exceptions to connected IPv4 networks from start conflicts;
 - retain one bounded private failure record across reboot.
 
-Tests cover 10 mocked transaction scenarios, false-health action status, and isolated
+Tests cover 13 mocked transaction scenarios, false-health action status, and isolated
 listener/changed-node selection. These do not establish real-router recovery.
 
 Not yet completed: hardware tests with PPPoE/NetBird/TTL, process-kill/power-loss
@@ -36,3 +36,13 @@ Cold-install safety additions:
   malformed/truncated archive, wrong version, config rejection, space and copy errors.
 These tests guard network command calls; they do not prove router connectivity or
 recovery after SIGKILL/power loss. No router installation was performed.
+
+Stop and rollback failure handling:
+- stop attempts desired-state updates, disable and service cleanup despite earlier errors;
+- DNS and firewall cleanup run independently and preserve failure status;
+- failed fw4 restart attempts to empty only the six package-owned interception hook chains;
+- incomplete rollback retains the private RAM snapshot and records its path; subsequent
+  subscription updates refuse to overwrite that unresolved recovery state;
+- restoration writes use temporary files; copy/restart/connectivity failures are tested.
+This does not establish procd/PPPoE/NetBird behavior on hardware. Retained RAM files
+do not survive reboot; a power-loss recovery journal remains outstanding.

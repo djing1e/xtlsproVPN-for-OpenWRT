@@ -13,9 +13,14 @@ if [ "${FX_LOCK_HELD:-0}" != 1 ];then
     flock -n 8 || { echo 'Another operation is running';exit 1; }
     export FX_LOCK_HELD=1
 fi
+if [ -f "$RUN/subscription-recovery" ];then
+    echo 'A previous subscription rollback is unresolved. Inspect subscription-recovery before updating again.' >&2
+    exit 1
+fi
 WORK=$(mktemp -d /tmp/xtls-sync-safe.XXXXXX)
 APPLIED=0
 COMMITTED=0
+KEEP_WORK=0
 PROBE_PID=
 WAS_RUNNING=0
 WAS_ENABLED=$(uci -q get xray_core.general.transparent_proxy_enable || :)
@@ -50,6 +55,8 @@ healthy() {
 finish() {
     rc=$?
     trap - EXIT HUP INT TERM
+    # Recovery must continue collecting failures even when a restore command fails.
+    set +e
     stop_probe
     if [ "$rc" != 0 ];then
         {
@@ -59,20 +66,46 @@ finish() {
             tail -c 4096 "$WORK/probe-core.log" 2>/dev/null || :
         } > "$RUN/last-apply-failure.log"
         if [ "$APPLIED" = 1 ] && [ "$COMMITTED" = 0 ];then
+            restore_failed=0
             for file in $FILES;do
-                if [ -f "$WORK/previous/$file" ];then cp -p "$WORK/previous/$file" "$STATE/$file";else rm -f "$STATE/$file";fi
+                if [ -f "$WORK/previous/$file" ];then
+                    if cp -p "$WORK/previous/$file" "$STATE/$file.sync-new";then
+                        mv "$STATE/$file.sync-new" "$STATE/$file" || restore_failed=1
+                    else
+                        restore_failed=1
+                    fi
+                else
+                    rm -f "$STATE/$file" || restore_failed=1
+                fi
+                rm -f "$STATE/$file.sync-new"
             done
-            cp -p "$WORK/previous-core" "$CORE.rollback"
-            mv "$CORE.rollback" "$CORE"
-            if [ "$WAS_RUNNING" = 1 ];then
-                "$INIT" restart 7>&- 8>&- 9>&- || :
-                restored=0
-                for attempt in 1 2 3 4 5;do sleep 2; if healthy;then restored=1;break;fi;done
-                if [ "$restored" = 1 ];then
+            if cp -p "$WORK/previous-core" "$CORE.rollback";then
+                mv "$CORE.rollback" "$CORE" || restore_failed=1
+            else
+                restore_failed=1
+            fi
+            restored=0
+            if [ "$restore_failed" = 0 ];then
+                if [ "$WAS_RUNNING" = 1 ];then
+                    if "$INIT" restart 7>&- 8>&- 9>&-;then
+                        for attempt in 1 2 3 4 5;do sleep 2; if healthy;then restored=1;break;fi;done
+                    fi
+                else
+                    restored=1
+                fi
+            fi
+            if [ "$restored" = 1 ];then
+                if [ "$WAS_RUNNING" = 1 ];then
                     echo 'Previous configuration restored; HTTPS and DNS verified.'
                 else
-                    echo 'Previous configuration restored, but connectivity is not confirmed. Inspect last-apply-failure.log.'
+                    echo 'Previous configuration restored; proxy remains stopped.'
                 fi
+                echo 'Rollback completed.' >> "$RUN/last-apply-failure.log"
+            else
+                KEEP_WORK=1
+                printf '%s\n' "$WORK" > "$RUN/subscription-recovery"
+                echo "Recovery snapshot retained in RAM: $WORK" | tee -a "$RUN/last-apply-failure.log"
+                echo 'Rollback failed or connectivity is unconfirmed; working recovery files were retained.' >&2
             fi
         fi
         # One bounded incident record survives a reboot; no continuous flash logging.
@@ -80,7 +113,7 @@ finish() {
         chmod 600 /etc/xtlsprovpn-last-apply-failure.log || :
     fi
     rm -f "$CORE.sync-new"
-    rm -rf "$WORK"
+    if [ "$KEEP_WORK" != 1 ];then rm -rf "$WORK";fi
     exit "$rc"
 }
 trap finish EXIT

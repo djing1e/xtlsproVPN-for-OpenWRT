@@ -126,12 +126,18 @@ start)
     ;;
 stop)
     # Clear desired state before stopping; a cleanup error must not trigger watchdog recovery.
-    uci set xray_core.general.transparent_proxy_enable=0
-    uci set xray_core.general.fx_start_authorized=0
-    uci commit xray_core
-    /etc/init.d/xray_core disable 8>&- 9>&-
-    /etc/init.d/xray_core stop 8>&- 9>&-
-    echo 'Proxy stopped; native dnsmasq upstream configuration restored.'
+    stop_rc=0
+    uci set xray_core.general.transparent_proxy_enable=0 || stop_rc=1
+    uci set xray_core.general.fx_start_authorized=0 || stop_rc=1
+    uci commit xray_core || stop_rc=1
+    /etc/init.d/xray_core disable 8>&- 9>&- || stop_rc=1
+    /etc/init.d/xray_core stop 8>&- 9>&- || stop_rc=1
+    if /etc/init.d/xray_core running >/dev/null 2>&1; then stop_rc=1; fi
+    if [ "$stop_rc" != 0 ]; then
+        echo 'Остановка выполнена с ошибками. Проверьте DNS и очистку перехвата; успешное восстановление не подтверждено.' >&2
+        exit 1
+    fi
+    echo 'Прокси остановлен; конфигурация Xray удалена из dnsmasq, службы очистки завершились без ошибок.'
     ;;
 status)
     ubus call service list '{"name":"xray_core"}'
