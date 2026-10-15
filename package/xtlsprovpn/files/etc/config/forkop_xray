@@ -1,6 +1,6 @@
 config settings 'main'
     option enabled '0'
     option subscription_url ''
-    option user_agent 'Happ'
+    option user_agent ''
     option hwid_enabled '1'
     option hwid ''

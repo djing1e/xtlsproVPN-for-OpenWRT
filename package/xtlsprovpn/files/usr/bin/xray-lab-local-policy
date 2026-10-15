@@ -19,9 +19,14 @@ valid_prefix() {
 }
 
 ip -4 -o rule show protocol 242 > "$work/current"
-awk '$1=="103:" && /fwmark 0xfb(\/0xffffffff)? / && /lookup main/ {
-    for(i=1;i<NF;i++) if($i=="to") print $(i+1)
-}' "$work/current" | sort -u > "$work/owned"
+prefixes() {
+    awk '$1=="103:" && /fwmark 0xfb(\/0xffffffff)? / && /lookup main([[:space:]]|$)/ {
+        for(i=1;i<NF;i++) if($i=="to") print $(i+1)
+    }' "$1" | sort -u
+}
+prefixes "$work/current" > "$work/owned"
+ip -4 -o rule show > "$work/all"
+prefixes "$work/all" > "$work/existing"
 : > "$work/desired"
 case "${1:-up}" in
 up)
@@ -46,7 +51,7 @@ sort -u "$work/desired" > "$work/sorted"
 # Validate every route before changing policy. No default or remote routes.
 while IFS= read -r prefix; do valid_prefix "$prefix" || exit 1; done < "$work/sorted"
 while IFS= read -r prefix; do
-    grep -qxF "$prefix" "$work/owned" && continue
+    grep -qxF "$prefix" "$work/existing" && continue
     ip -4 rule add pref 103 fwmark 0xfb/0xffffffff to "$prefix" lookup main protocol 242
 done < "$work/sorted"
 while IFS= read -r prefix; do

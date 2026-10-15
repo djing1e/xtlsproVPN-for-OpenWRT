@@ -77,8 +77,8 @@ return baseclass.extend({
                     u.phase==='compatible' && u.available===selected;
                 const failed=['failed','interrupted'].includes(j.state);
                 let message=u.message || 'Обновите список и выберите версию.';
-                if(failed && (!u.updated || u.updated<(j.started || 0)))
-                    message='Операция не завершена. Возможно, выполняется другая задача xtlsproVPN.';
+                if(failed)
+                    message=data.log || 'Операция не завершена. Откройте диагностику.';
                 if(j.state==='interrupted')
                     message='Операция прервана. Проверьте диагностику.';
                 if(error) message=error;
@@ -113,7 +113,7 @@ return baseclass.extend({
 
                 body.replaceChildren(
                     E('h2',{},'Ядро xtlsproVPN'),
-                    E('p',{},'Установлено: '+(data.installed || 'не определено')+
+                    E('p',{},'Установлено: '+(data.installed || 'ядро ещё не установлено')+
                         (data.rollback_available?' · Резервная версия доступна':'')),
                     E('label',{
                         style:'display:flex;align-items:center;gap:8px;margin:12px 0'
@@ -184,7 +184,7 @@ return baseclass.extend({
                         E('span',{},message)
                     ]),
                     E('p',{style:'opacity:.75;font-size:.9em'},
-                        'Prerelease доступны только при включённом переключателе. Перед установкой конфигурация проверяется повторно. По умолчанию резервное ядро удаляется после успешной проверки запуска.')
+                        'При первой установке проверяется минимальная конфигурация; прокси не запускается. После добавления подписки нужна проверка соединения. Prerelease доступны только при включённом переключателе. Перед установкой конфигурация проверяется повторно. По умолчанию резервное ядро удаляется после успешной проверки запуска.')
                 );
             }
             draw();

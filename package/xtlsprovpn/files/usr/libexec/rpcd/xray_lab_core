@@ -38,6 +38,7 @@ if (method=='get') {
         rollback_available:fs.stat('/usr/libexec/forkop-xray/xray.previous')!=null,
         catalog:load(root+'/core-releases.json',{releases:[]}),
         update:load(root+'/core-update.json',{}),
+        log:substr(fs.readfile(root+'/core-ui.log') || '', -2000),
         job
     }));
     exit(0);

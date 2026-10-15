@@ -51,7 +51,7 @@ return view.extend({
                 'select','auto',busy || s.mode==='auto',s.mode==='auto',s.mode==='auto'?'leastPing включён':'Включить leastPing');
             const content=[cards,service,
                 E('div',{'class':'fx-buttons'},[
-                    lab.button('Обновить подписку','sync','',busy),lab.button('Измерить задержки','latency','',busy || !s.metrics_ready),
+                    lab.button('Обновить подписку и списки','sync','',busy),lab.button('Измерить задержки','latency','',busy || !s.metrics_ready),
                     lab.button(s.enabled && s.core.running?'Остановить прокси':'Запустить прокси',s.enabled && s.core.running?'stop':'start','',busy),
                     E('a',{'class':'cbi-button',href:L.url('admin/services/forkop-xray/diagnostics')},'Диагностика')
                 ]),lab.jobNote(s),

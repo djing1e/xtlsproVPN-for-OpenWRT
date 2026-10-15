@@ -12,13 +12,16 @@ if Path(sys.argv[0]).name=='uci':
  print(d[k]);sys.exit(0)
 if a==['-4','-o','rule','show','protocol','242']:
  for v in s['owned']:print('103: from all to '+v+' fwmark 0xfb lookup main proto 242')
+elif a==['-4','-o','rule','show']:
+ for v in s['owned']+s.get('foreign',[]):print('103: from all to '+v+' fwmark 0xfb lookup main')
+ print('110: not from all fwmark 0x1bd00 lookup netbird')
 elif a[:4]==['-4','route','show','table']:
  for v in s['routes'].get(a[a.index('dev')+1],[]):print(v+' proto kernel scope link src 192.168.5.1')
 elif a[:3] in (['-4','rule','add'],['-4','rule','del']):
  assert a[3:7]==['pref','103','fwmark','0xfb/0xffffffff'] and a[-4:]==['lookup','main','protocol','242']
  v=a[a.index('to')+1]
  if a[2]=='add':
-  assert v not in s['owned'];s['owned'].append(v)
+  assert v not in s['owned']+s.get('foreign',[]);s['owned'].append(v)
  else:s['owned'].remove(v)
  s['changes']+=1;p.write_text(json.dumps(s))
 else:raise Exception(a)
@@ -43,6 +46,12 @@ class LocalPolicy(unittest.TestCase):
   s=self.get();s['routes']['br-guest']=['192.168.8.0/24'];self.put(s)
   self.run_policy();self.assertEqual(set(self.get()['owned']),{'192.168.5.0/24','192.168.8.0/24'})
   self.run_policy('down');self.assertEqual(self.get()['owned'],[])
+ def test_existing_manual_rule_is_preserved(self):
+  s=self.get();s['foreign']=['192.168.5.0/24'];self.put(s)
+  self.run_policy();self.assertEqual(self.get()['owned'],['192.168.7.0/24'])
+  self.run_policy('down');self.assertEqual(self.get()['foreign'],['192.168.5.0/24'])
+  s=self.get();s['foreign']=[];self.put(s)
+  self.run_policy();self.assertIn('192.168.5.0/24',self.get()['owned'])
  def test_bad_or_default_route_changes_nothing(self):
   for bad in ['default','0.0.0.0/0','999.168.1.0/24','192.168.1.0/33']:
    s=self.get();s['routes']['br-lan']=[bad];self.put(s)

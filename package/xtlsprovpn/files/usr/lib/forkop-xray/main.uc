@@ -34,21 +34,34 @@ function settings() {
     // Missing option preserves the previously configured header exactly.
     if (s.hwid_enabled == '0') s.hwid = '';
     else if (s.hwid_enabled == '1' && !s.hwid) {
-        let path = state_dir + '/device-hwid';
+        let path = state_dir + '/device-hwid-short';
         let id = trim(fs.readfile(path) || '');
-        if (!match(id, /^[a-f0-9-]{36}$/)) {
-            id = trim(fs.readfile('/proc/sys/kernel/random/uuid') || '');
-            if (!match(id, /^[a-f0-9-]{36}$/)) die('Cannot generate device identity');
+        if (!match(id, /^[a-f0-9]{4}(-[a-f0-9]{4}){3}$/)) {
+            let mac = trim(fs.readfile('/sys/class/net/eth0/address') || fs.readfile('/sys/class/net/br-lan/address') || '');
+            let model = trim(fs.readfile('/tmp/sysinfo/model') || '');
+            if (!mac) mac = trim(fs.readfile(state_dir + '/device-hwid') || fs.readfile('/proc/sys/kernel/random/uuid') || '');
+            if (!mac) die('Cannot generate device identity');
+            let p = fs.popen('printf %s ' + quote(mac + '-' + model) + ' | md5sum', 'r');
+            if (!p) die('Cannot calculate device identity');
+            let hash = substr(trim(p.read('all') || ''), 0, 16);
+            if (p.close() != 0 || !match(hash, /^[a-f0-9]{16}$/)) die('Cannot calculate device identity');
+            id = substr(hash,0,4)+'-'+substr(hash,4,4)+'-'+substr(hash,8,4)+'-'+substr(hash,12,4);
             let temporary = path + '.' + id;
             if (!fs.writefile(temporary, id + '\n')) die('Cannot save device identity');
             fs.chmod(temporary, 0600);
-            // Hard-link publication never replaces an identity created by a concurrent reader.
             system(command(['ln', temporary, path]) + ' 2>/dev/null');
             fs.unlink(temporary);
             id = trim(fs.readfile(path) || '');
-            if (!match(id, /^[a-f0-9-]{36}$/)) die('Cannot commit device identity');
+            if (!match(id, /^[a-f0-9]{4}(-[a-f0-9]{4}){3}$/)) die('Cannot commit device identity');
         }
-        s.hwid = 'xtlsproRouter(id:' + id + ')';
+        s.hwid = id;
+    }
+    if (!s.user_agent) {
+        let p = fs.popen('/usr/libexec/forkop-xray/xray version 2>/dev/null','r');
+        let output = p ? p.read('all') || '' : '';
+        if (p) p.close();
+        let version = match(output, /^Xray ([0-9]+\.[0-9]+\.[0-9]+)/);
+        s.user_agent = 'Xray/' + (version ? version[1] : 'unknown');
     }
     return s;
 }
@@ -135,11 +148,22 @@ function fetch(s) {
     if (!match(url, /^https:\/\/[^[:space:]]+$/)) die('Subscription URL must use HTTPS');
     let ua = s.user_agent || 'v2rayN', hwid = s.hwid || '';
     if (match(ua + hwid, /[\r\n]/)) die('Invalid subscription header');
+    if (hwid != '' && !match(hwid, /^[a-zA-Z0-9=-]{10,64}$/))
+        die('Invalid HWID: use 10-64 Latin letters, digits, = or -. Clear custom HWID to use the router identity.');
     let body = run_dir + '/download.body', headers = run_dir + '/download.headers';
     // URL and credential headers are read from a private config, not curl process arguments.
     function curl_value(v) { return '"' + replace(replace(v, /\\/g, '\\\\'), /"/g, '\\"') + '"'; }
     let cfg = 'url = ' + curl_value(url) + '\nuser-agent = ' + curl_value(ua) + '\n';
-    if (hwid != '') cfg += 'header = ' + curl_value('X-HWID: ' + hwid) + '\n';
+    if (hwid != '') {
+        cfg += 'header = ' + curl_value('X-HWID: ' + hwid) + '\n';
+        let release = match(fs.readfile('/etc/openwrt_release') || '', /DISTRIB_RELEASE=['"]([^'"\r\n]+)['"]/);
+        let os_version = release ? release[1] : 'unknown';
+        let model = substr(trim(fs.readfile('/tmp/sysinfo/model') || 'OpenWrt router'), 0, 160);
+        model = replace(model, /[\r\n]/g, ' ');
+        cfg += 'header = ' + curl_value('X-Device-OS: OpenWrt Linux') + '\n';
+        cfg += 'header = ' + curl_value('X-Ver-OS: ' + os_version) + '\n';
+        cfg += 'header = ' + curl_value('X-Device-Model: ' + model) + '\n';
+    }
     fs.writefile(run_dir + '/curl.conf', cfg); fs.chmod(run_dir + '/curl.conf', 0600);
     let args = ['curl', '--fail', '--silent', '--show-error', '--location', '--max-redirs', '3',
         '--ipv4', '--proto', '=https', '--proto-redir', '=https', '--connect-timeout', '15', '--max-time', '60',

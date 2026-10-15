@@ -71,3 +71,15 @@ xtlspro-core-bootstrap 26.7.28 /tmp/Xray-linux-arm64-v8a.zip /tmp/Xray-linux-arm
 - измерение flash/RAM; затем фиксация стабильного v1.0.0.
 
 В комплекте self-contained тесты синтетического каталога и HWID. Нужны ucode с fs и официальный тестовый Xray, путь XRAY_TEST_BIN можно задать окружением. Базовый check-source.py не требует Xray. Конфиденциальных данных рабочей подписки в тестах нет.
+
+
+## 1.0.0-r4 — unified test build
+
+Includes persistent LAN source-validation policy (with existing manual rules preserved),
+short persistent HWID and router metadata, automatic Xray/version User-Agent,
+manual subscription + routing refresh, and first core installation from LuCI.
+The package contains neither a core executable nor customer subscriptions/geodata.
+First core installation validates a minimal configuration and leaves the proxy stopped.
+Install the selected core, enter a subscription, then refresh and start the proxy.
+Hardware validation of cold installation and reboot persistence is still required;
+this is a test build, not a confirmed stable release. IPv6 interception is not implemented.

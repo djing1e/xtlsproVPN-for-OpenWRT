@@ -49,10 +49,16 @@ esac
     echo 'Эта версия обновлятора поддерживает только aarch64.'
     exit 1
 }
-[ -f "$BIN" ] && [ ! -L "$BIN" ] || {
+FIRST_INSTALL=0
+if [ ! -e "$BIN" ] && [ ! -L "$BIN" ]; then
+    FIRST_INSTALL=1
+elif [ ! -f "$BIN" ] || [ -L "$BIN" ]; then
     echo 'Неожиданный путь или тип файла ядра.'
     exit 1
-}
+fi
+if [ "$FIRST_INSTALL" = 1 ]; then
+    case "$ACTION" in rollback|purge-backup) echo 'Ядро ещё не установлено.'; exit 1;; esac
+fi
 [ "$(uci -q get xray_core.general.xray_bin)" = "$BIN" ] || {
     echo 'В конфигурации выбран другой бинарник Xray.'
     exit 1
@@ -65,7 +71,10 @@ flock -n 9 || {
     exit 1
 }
 
-INSTALLED=$("$BIN" version | awk 'NR==1 {print $2}')
+INSTALLED=
+if [ "$FIRST_INSTALL" = 0 ]; then
+    INSTALLED=$("$BIN" version | awk 'NR==1 {print $2}')
+fi
 WORK=$(mktemp -d /tmp/xray-core-update.XXXXXX)
 
 record() {
@@ -127,9 +136,9 @@ fetch() {
     rm -f "$output"
 
     echo 'Загрузка напрямую...'
-    if curl --silent --show-error --fail --location \
+    if curl -4 --http1.1 --silent --show-error --fail --location \
         --proto '=https' --proto-redir '=https' \
-        --noproxy '*' --connect-timeout 5 --max-time 25 \
+        --noproxy '*' --connect-timeout 5 --max-time 120 --speed-limit 1024 --speed-time 20 \
         --max-filesize "$limit" \
         --output "$output" "$url"; then
         return 0
@@ -169,9 +178,15 @@ validate() {
     candidate=$1
     record validating 'Проверяем версию и конфигурацию новым ядром...'
     "$candidate" version
-    XRAY_LOCATION_ASSET=/usr/share/xray \
-        GOMEMLIMIT=64MiB GOMAXPROCS=2 \
-        "$candidate" run -test -confdir /var/etc/xray
+    if [ "$FIRST_INSTALL" = 1 ]; then
+        # No subscription exists yet: validate a minimal offline configuration.
+        printf '%s\n' '{"log":{"loglevel":"warning"},"inbounds":[],"outbounds":[{"protocol":"freedom","tag":"direct"}]}' > "$WORK/minimal.json"
+        XRAY_LOCATION_ASSET=/usr/share/xray GOMEMLIMIT=64MiB GOMAXPROCS=2 \
+            "$candidate" run -test -c "$WORK/minimal.json"
+    else
+        XRAY_LOCATION_ASSET=/usr/share/xray GOMEMLIMIT=64MiB GOMAXPROCS=2 \
+            "$candidate" run -test -confdir /var/etc/xray
+    fi
 }
 
 verify_running() {
@@ -245,6 +260,7 @@ if [ "$ACTION" = install ] || [ "$ACTION" = test ]; then
     fi
 fi
 
+if [ "$FIRST_INSTALL" = 0 ]; then
 /etc/init.d/xray_core running >/dev/null 2>&1 || {
     echo 'Для установки и проверки отката Xray должен работать.'
     exit 1
@@ -255,6 +271,8 @@ pinned_health || {
     echo 'Рабочая нода не прошла HTTPS-проверку. Замена отменена.'
     exit 1
 }
+
+fi
 
 if [ "$ACTION" = rollback ]; then
     test -x "$BIN.previous"
@@ -305,7 +323,11 @@ fi
 
 
 if [ "$ACTION" = test ]; then
-    record compatible "Xray $candidate_version принимает текущую конфигурацию. Ядро не заменено."
+    if [ "$FIRST_INSTALL" = 1 ]; then
+        record compatible "Xray $candidate_version запускается и принимает минимальную конфигурацию. Подписка и LAN ещё не проверены."
+    else
+        record compatible "Xray $candidate_version принимает текущую конфигурацию. Ядро не заменено."
+    fi
     exit 0
 fi
 
@@ -316,13 +338,27 @@ free_kb=$(df -Pk /overlay | awk 'NR==2 {print $4}')
     exit 1
 }
 
-record staging 'Записываем проверенное ядро и сохраняем предыдущую версию...'
+if [ "$FIRST_INSTALL" = 1 ]; then
+    mkdir -p "$(dirname "$BIN")"
+fi
+record staging 'Записываем проверенное ядро...' 
 cp "$WORK/xray" "$BIN.next"
 chmod 755 "$BIN.next"
 
 expected=$(sha256sum "$WORK/xray" | awk '{print $1}')
 actual=$(sha256sum "$BIN.next" | awk '{print $1}')
 [ "$expected" = "$actual" ] || exit 1
+
+if [ "$FIRST_INSTALL" = 1 ]; then
+    # Refuse to replace a core that appeared after the initial check.
+    [ ! -e "$BIN" ] && [ ! -L "$BIN" ] || exit 1
+    mv "$BIN.next" "$BIN"
+    sync
+    rm -f "$RUN/core-version"
+    INSTALLED=$candidate_version
+    record done "Ядро Xray $INSTALLED установлено. Прокси не запускался. Добавьте подписку и запустите подключение."
+    exit 0
+fi
 
 rm -f "$BIN.previous.new"
 ln "$BIN" "$BIN.previous.new"

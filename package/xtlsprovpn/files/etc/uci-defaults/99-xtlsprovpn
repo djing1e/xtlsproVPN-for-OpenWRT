@@ -5,6 +5,14 @@ chmod 700 /etc/forkop-xray /var/run/xray-lab-control
 for file in /etc/config/forkop_xray /etc/config/xray_core /etc/config/xray_lab_dns /etc/config/xray_lab_core /etc/config/xray_lab_schedule; do
     [ ! -f "$file" ] || chmod 600 "$file"
 done
+# Migrate our previous default headers; retain custom identities and subscription URLs.
+hwid=$(uci -q get forkop_xray.main.hwid || :)
+if printf '%s\n' "$hwid" | grep -Eq '^xtlsproRouter-[a-f0-9-]{36}$'; then
+    uci -q delete forkop_xray.main.hwid || :
+fi
+ua=$(uci -q get forkop_xray.main.user_agent || :)
+case "$ua" in Happ|xtlspro) uci set forkop_xray.main.user_agent='' ;; esac
+uci commit forkop_xray
 # Registration only: no core, firewall, DNS or LAN changes on installation.
 /etc/init.d/rpcd reload || :
 rm -f /tmp/luci-indexcache /tmp/luci-indexcache.*

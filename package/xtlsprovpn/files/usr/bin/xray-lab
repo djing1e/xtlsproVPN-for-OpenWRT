@@ -14,6 +14,11 @@ if [ "${FX_LOCK_HELD:-0}" != 1 ] && [ "${1:-status}" != status ] && [ "${1:-stat
     export FX_LOCK_HELD=1
 fi
 case "${1:-status}" in
+refresh)
+    "$0" sync
+    echo 'Subscription updated; checking routing profile and databases...'
+    /usr/bin/xray-lab-routing update
+    ;;
 sync)
     exec 9>/var/run/xray-lab-sync.lock
     flock -n 9 || { echo 'Subscription sync is already running'; exit 1; }

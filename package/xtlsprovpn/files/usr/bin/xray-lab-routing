@@ -10,8 +10,11 @@ umask 077
 ROOT=/usr/share/xray
 CORE=/usr/libexec/forkop-xray/xray
 mkdir -p /var/run/xray-lab-control
-exec 9>/var/run/xray-lab-control/action.lock
-flock -n 9 || { echo 'Another lab operation is running'; exit 1; }
+if [ "${FX_LOCK_HELD:-0}" != 1 ]; then
+    exec 9>/var/run/xray-lab-control/action.lock
+    flock -n 9 || { echo 'Another lab operation is running'; exit 1; }
+    export FX_LOCK_HELD=1
+fi
 case "${1:-status}" in
 status)
     printf 'Routing: %s\n' "$(uci -q get xray_core.general.fx_routing || echo all-proxy)"
@@ -30,7 +33,8 @@ update) :;;
 *) echo 'Usage: xray-lab-routing update|status|disable'; exit 1;;
 esac
 [ "$(uci -q get xray_core.general.fx_dashboard || :)" = 1 ] || { echo 'Dashboard lab required'; exit 1; }
-/etc/init.d/xray_core running || { echo 'Start and verify the existing lab first'; exit 1; }
+WAS_RUNNING=0
+/etc/init.d/xray_core running >/dev/null 2>&1 && WAS_RUNNING=1
 WORK=$(mktemp -d /tmp/xray-roscomvpn.XXXXXX)
 MUTATED=0
 cleanup() {
@@ -42,7 +46,9 @@ cleanup() {
         for name in roscom-geoip.dat roscom-geosite.dat roscomvpn/profile.json; do
             if [ -f "$WORK/old/$name" ]; then cp -p "$WORK/old/$name" "$ROOT/$name"; else rm -f "$ROOT/$name"; fi
         done
-        /etc/init.d/xray_core restart 9>&- || echo 'Recovery restart failed; inspect service status'
+        if [ "$WAS_RUNNING" = 1 ]; then
+            /etc/init.d/xray_core restart 8>&- 9>&- || echo 'Recovery restart failed; inspect service status'
+        fi
     fi
     rm -rf "$WORK"
     exit "$rc"
@@ -148,7 +154,13 @@ cp "$WORK/profile.json" "$ROOT/roscomvpn/profile.json.new"
 mv "$ROOT/roscomvpn/profile.json.new" "$ROOT/roscomvpn/profile.json"
 cp "$WORK/xray_core" /etc/config/xray_core.new
 mv /etc/config/xray_core.new /etc/config/xray_core
-/etc/init.d/xray_core restart 9>&-
+if [ "$WAS_RUNNING" = 0 ]; then
+    MUTATED=0
+    date +%s > /var/run/xray-lab-control/routing-updated
+    echo 'Routing files validated and saved. Proxy remains stopped; client routing is not tested.'
+    exit 0
+fi
+/etc/init.d/xray_core restart 8>&- 9>&-
 sleep 2
 /etc/init.d/xray_core running
 echo 'Checking real HTTPS through a pinned subscription node...'

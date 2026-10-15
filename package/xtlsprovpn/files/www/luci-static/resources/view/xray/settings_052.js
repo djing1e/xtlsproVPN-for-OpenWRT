@@ -28,15 +28,15 @@ return view.extend({
         const sub=subscription.section(form.NamedSection,'main','settings');
         o=sub.option(form.Value,'subscription_url','URL подписки (HTTPS)');o.password=true;
         o.validate=(sid,v)=>!v || /^https:\/\/[^\s]+$/i.test(v)?true:'Требуется HTTPS-адрес.';
-        o=sub.option(form.Value,'user_agent','User-Agent');o.placeholder='Happ';
+        o=sub.option(form.Value,'user_agent','User-Agent');o.placeholder='Xray/версия установленного ядра';
         o=sub.option(form.Flag,'hwid_enabled','Передавать HWID',
             'Постоянный идентификатор этого роутера для учёта устройств в подписке.');
         o.rmempty=false;
         o.cfgvalue=()=>uci.get('forkop_xray','main','hwid_enabled') ?? (uci.get('forkop_xray','main','hwid')?'1':'0');
         o=sub.option(form.Value,'hwid','Свой HWID',
-            'Пустое поле — xtlsproRouter(id:постоянный UUID этого роутера). Уже указанный HWID сохраняется.');
+            'Пустое поле — постоянный HWID роутера вида xxxx-xxxx-xxxx-xxxx. Свой HWID имеет приоритет.');
         o.password=true;o.depends('hwid_enabled','1');
-        o.validate=(sid,v)=>!v || /^[A-Za-z0-9_.:()-]{1,256}$/.test(v)?true:'До 256 символов: буквы, цифры, _, -, точка, двоеточие и круглые скобки.';
+        o.validate=(sid,v)=>!v || /^[A-Za-z0-9=-]{10,64}$/.test(v)?true:'От 10 до 64 символов: латинские буквы, цифры, = и -.';
         return Promise.all([map.render(),subscription.render(),schedule.render(),coreUpdate.render(),dnsSettings.render(initial[2]),routingPanel.render(initial[2])]).then(parts=>{
             const content=E('div'), tabs=E('div',{'class':'xt-tabs',role:'tablist','aria-label':'Разделы настроек'});
             const panels=[], controls=[];

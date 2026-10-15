@@ -48,7 +48,10 @@ worker)
     start) /usr/bin/xray-lab start; ucode "$UC" health ;;
     stop) /usr/bin/xray-lab stop ;;
     restart) /usr/bin/xray-lab stop; /usr/bin/xray-lab start; ucode "$UC" health ;;
-    sync) /usr/bin/xray-lab sync; ucode "$UC" health ;;
+    sync)
+        /usr/bin/xray-lab refresh
+        if /etc/init.d/xray_core running >/dev/null 2>&1; then ucode "$UC" health; fi
+        ;;
     diagnose) ucode "$UC" diagnose ;;
     latency) ucode "$UC" latency ;;
     select|recover)
