@@ -6,9 +6,21 @@ mkdir -p "$work"
 name=openwrt-sdk-25.12.5-mediatek-filogic_gcc-14.3.0_musl.Linux-x86_64.tar.zst
 expected=ff4a38a397caa2cfe1c39e18f84ddede14878221b3593c3f2c4cfe24e3ec4c25
 if [ ! -d "$work/sdk" ];then
-    curl --fail --location --retry 3 --connect-timeout 15 --max-time 900 \
-        "https://downloads.openwrt.org/releases/25.12.5/targets/mediatek/filogic/$name" -o "$work/$name"
-    printf '%s  %s\n' "$expected" "$work/$name" | sha256sum -c -
+    url="https://downloads.openwrt.org/releases/25.12.5/targets/mediatek/filogic/$name"
+    verified=0
+    for attempt in 1 2 3 4 5;do
+        if [ -f "$work/$name" ] && printf '%s  %s\n' "$expected" "$work/$name" | sha256sum -c - >/dev/null 2>&1;then
+            verified=1;break
+        fi
+        echo "Downloading official SDK using HTTP/1.1, attempt $attempt (resume enabled)"
+        curl --http1.1 --fail --silent --show-error --location --continue-at - \
+            --connect-timeout 15 --max-time 900 --speed-limit 1024 --speed-time 45 \
+            "$url" -o "$work/$name" || continue
+        if printf '%s  %s\n' "$expected" "$work/$name" | sha256sum -c -;then verified=1;break;fi
+        # A complete but mismatched archive must be downloaded again from zero.
+        rm -f "$work/$name"
+    done
+    [ "$verified" = 1 ] || { echo 'SDK download/checksum failed after retries';exit 1; }
     mkdir "$work/sdk"
     tar --zstd -xf "$work/$name" -C "$work/sdk" --strip-components=1
 fi
