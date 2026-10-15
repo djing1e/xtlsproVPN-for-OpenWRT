@@ -1,0 +1,68 @@
+#!/usr/bin/ucode
+let fs = require('fs');
+let op = ARGV[0], method = ARGV[1];
+
+if (op == 'list') {
+    print('{"get":{},"save":{"subscription_enabled":"","subscription_hours":"","routing_enabled":"","routing_hours":"","routing_minute":""}}');
+    exit(0);
+}
+
+if (op != 'call') exit(1);
+
+if (method == 'get') {
+    let c = require('uci').cursor();
+    let s = c.get_all('xray_lab_schedule', 'main') || {};
+    print(sprintf('%J', {
+        subscription_enabled: s.subscription_enabled ?? '1',
+        subscription_hours: s.subscription_hours ?? '6',
+        routing_enabled: s.routing_enabled ?? '1',
+        routing_hours: s.routing_hours ?? '6',
+        routing_minute: s.routing_minute ?? '15'
+    }));
+    exit(0);
+}
+
+if (method != 'save') {
+    print('{"error":"Unknown method"}');
+    exit(0);
+}
+
+let p;
+try {
+    p = json(fs.stdin.read('all') || '{}');
+} catch (e) {
+    print('{"error":"Invalid request"}');
+    exit(0);
+}
+
+let names = [
+    'subscription_enabled', 'subscription_hours',
+    'routing_enabled', 'routing_hours', 'routing_minute'
+];
+let values = map(names, k => '' + p[k]);
+
+if (!match(values[0], /^[01]$/) ||
+    !match(values[2], /^[01]$/) ||
+    !match(values[1], /^(1|3|6|12|24)$/) ||
+    !match(values[3], /^(1|3|6|12|24)$/) ||
+    !match(values[4], /^[0-9]{1,2}$/) ||
+    +values[4] > 59) {
+    print('{"error":"Недопустимые параметры расписания"}');
+    exit(0);
+}
+
+let pipe = fs.popen('/usr/bin/xray-lab-schedule ' +
+    join(' ', values) + ' 2>/dev/null', 'r');
+
+if (!pipe) {
+    print('{"error":"Не удалось запустить сохранение"}');
+    exit(0);
+}
+
+let body = pipe.read('all');
+let rc = pipe.close();
+
+if (rc != 0 || !body)
+    print('{"error":"Ошибка сохранения расписания"}');
+else
+    print(body);

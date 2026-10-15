@@ -1,0 +1,164 @@
+#!/bin/sh
+
+# Track CLI, dashboard and cron updates through one entry point.
+if [ "${1:-}" = "update" ] &&
+    [ "${FX_UPDATE_TRACKED:-}" != 1 ]; then
+    exec /usr/bin/xray-lab-update-run routing
+fi
+set -eu
+umask 077
+ROOT=/usr/share/xray
+CORE=/usr/libexec/forkop-xray/xray
+mkdir -p /var/run/xray-lab-control
+exec 9>/var/run/xray-lab-control/action.lock
+flock -n 9 || { echo 'Another lab operation is running'; exit 1; }
+case "${1:-status}" in
+status)
+    printf 'Routing: %s\n' "$(uci -q get xray_core.general.fx_routing || echo all-proxy)"
+    if [ -f "$ROOT/roscomvpn/profile.json" ]; then
+        ucode -e 'let p=json(require("fs").readfile("/usr/share/xray/roscomvpn/profile.json")); printf("Profile: %s; upstream timestamp: %s\n",p.Name,p.LastUpdated);'
+        ls -lh "$ROOT/roscom-geoip.dat" "$ROOT/roscom-geosite.dat"
+    fi
+    exit 0;;
+disable)
+    uci -q delete xray_core.general.fx_routing || :
+    uci commit xray_core
+    /etc/init.d/xray_core restart 9>&-
+    echo 'RoscomVPN disabled; original all-proxy lab policy restored.'
+    exit 0;;
+update) :;;
+*) echo 'Usage: xray-lab-routing update|status|disable'; exit 1;;
+esac
+[ "$(uci -q get xray_core.general.fx_dashboard || :)" = 1 ] || { echo 'Dashboard lab required'; exit 1; }
+/etc/init.d/xray_core running || { echo 'Start and verify the existing lab first'; exit 1; }
+WORK=$(mktemp -d /tmp/xray-roscomvpn.XXXXXX)
+MUTATED=0
+cleanup() {
+    rc=$?
+    trap - EXIT HUP INT TERM
+    if [ "$MUTATED" = 1 ]; then
+        echo 'Restoring previous routing and core...'
+        cp -p "$WORK/previous-uci" /etc/config/xray_core
+        for name in roscom-geoip.dat roscom-geosite.dat roscomvpn/profile.json; do
+            if [ -f "$WORK/old/$name" ]; then cp -p "$WORK/old/$name" "$ROOT/$name"; else rm -f "$ROOT/$name"; fi
+        done
+        /etc/init.d/xray_core restart 9>&- || echo 'Recovery restart failed; inspect service status'
+    fi
+    rm -rf "$WORK"
+    exit "$rc"
+}
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
+download() {
+    label=$1; url=$2; output=$3; limit=$4
+    echo "Downloading $label..."
+    rc=0
+    curl --ipv4 --fail --silent --show-error --location --max-redirs 3 \
+        --proto '=https' --proto-redir '=https' --connect-timeout 8 --max-time 40 \
+        --max-filesize "$limit" --output "$output" \
+        --write-out 'Download: HTTP %{http_code}; DNS %{time_namelookup}s; total %{time_total}s\n' "$url" || rc=$?
+    case "$rc" in
+        0) :;;
+        6|7|28)
+            echo 'Retrying through the existing tunnel...'
+            curl --ipv4 --fail --silent --show-error --location --max-redirs 3 \
+                --proto '=https' --proto-redir '=https' --connect-timeout 8 --max-time 40 \
+                --max-filesize "$limit" --noproxy '' --proxy socks5h://127.0.0.1:1080 \
+                --output "$output" --write-out 'Proxy download: HTTP %{http_code}; total %{time_total}s\n' "$url";;
+        *) return "$rc";;
+    esac
+    [ -s "$output" ]
+}
+download profile https://raw.githubusercontent.com/hydraponique/roscomvpn-routing/refs/heads/main/HAPP/DEFAULT.JSON "$WORK/profile.json" 65536
+ucode - "$WORK/profile.json" "$WORK/urls" <<'UC'
+import { readfile, writefile } from 'fs';
+import { roscom_profile } from '/usr/share/xray/feature/roscomvpn.mjs';
+let p=roscom_profile(json(readfile(ARGV[0])));
+p._router_updated=time();
+writefile(ARGV[0],sprintf('%J',p));
+writefile(ARGV[1],p.Geoipurl+'\n'+p.Geositeurl+'\n');
+UC
+geoip_url=$(sed -n '1p' "$WORK/urls")
+geosite_url=$(sed -n '2p' "$WORK/urls")
+# Reuse unchanged, versioned assets; no duplicate formats or startup compilation.
+reuse=0
+if [ -s "$ROOT/roscomvpn/profile.json" ] && [ -s "$ROOT/roscom-geoip.dat" ] && [ -s "$ROOT/roscom-geosite.dat" ]; then
+    reuse=$(ucode - "$ROOT/roscomvpn/profile.json" "$WORK/profile.json" <<'UC'
+let fs=require('fs'); let a=json(fs.readfile(ARGV[0])), b=json(fs.readfile(ARGV[1]));
+print(a.Geoipurl==b.Geoipurl && a.Geositeurl==b.Geositeurl?'1':'0');
+UC
+)
+fi
+
+if [ "$reuse" = 1 ] &&
+    [ "$(uci -q get xray_core.general.fx_routing || :)" = roscomvpn ] &&
+    /etc/init.d/xray_core running >/dev/null 2>&1 &&
+    ucode - "$ROOT/roscomvpn/profile.json" "$WORK/profile.json" <<'UC_COMPARE'
+
+let fs = require('fs');
+let a = json(fs.readfile(ARGV[0]));
+let b = json(fs.readfile(ARGV[1]));
+
+delete a._router_updated;
+delete b._router_updated;
+
+function canonical(v) {
+    if (type(v) == 'object')
+        return ['object', map(sort(keys(v)), k => [k, canonical(v[k])])];
+    if (type(v) == 'array')
+        return ['array', map(v, canonical)];
+    return [type(v), v];
+}
+
+exit(sprintf('%J', canonical(a)) == sprintf('%J', canonical(b)) ? 0 : 1);
+
+UC_COMPARE
+then
+    date +%s > /var/run/xray-lab-control/routing-checked
+    echo 'Routing unchanged; running core retained'
+    exit 0
+fi
+if [ "$reuse" = 1 ]; then
+    cp "$ROOT/roscom-geoip.dat" "$WORK/roscom-geoip.dat"
+    cp "$ROOT/roscom-geosite.dat" "$WORK/roscom-geosite.dat"
+    echo 'Asset versions unchanged; using cached databases.'
+else
+    download GeoIP "$geoip_url" "$WORK/roscom-geoip.dat" 16777216
+    download GeoSite "$geosite_url" "$WORK/roscom-geosite.dat" 16777216
+fi
+echo 'Database sizes:'
+wc -c "$WORK/roscom-geoip.dat" "$WORK/roscom-geosite.dat"
+cp -p /etc/config/xray_core "$WORK/previous-uci"
+cp -p /etc/config/xray_core "$WORK/xray_core"
+uci -c "$WORK" set xray_core.general.fx_routing=roscomvpn
+uci -c "$WORK" commit xray_core
+echo 'Validating candidate against the installed Xray core...'
+FX_ROSCOM_PROFILE="$WORK/profile.json" XRAY_UCI_CONFIG_DIR="$WORK" ucode "$ROOT/gen_config.uc" > "$WORK/config.json"
+GOMEMLIMIT=48MiB GOMAXPROCS=2 XRAY_LOCATION_ASSET="$WORK" "$CORE" run -test -c "$WORK/config.json"
+mkdir -p "$WORK/old/roscomvpn" "$ROOT/roscomvpn"
+for name in roscom-geoip.dat roscom-geosite.dat roscomvpn/profile.json; do
+    if [ -f "$ROOT/$name" ]; then cp -p "$ROOT/$name" "$WORK/old/$name"; fi
+done
+MUTATED=1
+for name in roscom-geoip.dat roscom-geosite.dat; do
+    cp "$WORK/$name" "$ROOT/$name.new"
+    mv "$ROOT/$name.new" "$ROOT/$name"
+done
+cp "$WORK/profile.json" "$ROOT/roscomvpn/profile.json.new"
+mv "$ROOT/roscomvpn/profile.json.new" "$ROOT/roscomvpn/profile.json"
+cp "$WORK/xray_core" /etc/config/xray_core.new
+mv /etc/config/xray_core.new /etc/config/xray_core
+/etc/init.d/xray_core restart 9>&-
+sleep 2
+/etc/init.d/xray_core running
+echo 'Checking real HTTPS through a pinned subscription node...'
+curl --fail --silent --show-error --max-time 20 --connect-timeout 8 --noproxy '' \
+    --proxy socks5h://127.0.0.1:11500 https://api.ipify.org
+printf '\n'
+nslookup -type=A -timeout=5 -retry=1 openwrt.org 127.0.0.1:5300 > "$WORK/dns-check" 2>&1
+grep -q '^Name:' "$WORK/dns-check" || { cat "$WORK/dns-check"; exit 1; }
+nft list chain inet fw4 xray_prerouting >/dev/null
+MUTATED=0
+date +%s > /var/run/xray-lab-control/routing-updated
+echo 'RoscomVPN DEFAULT active. Selection and leastPing retained; DNS and LAN interception verified.'
+echo 'LAN routing still requires a client test. Rollback: xray-lab-routing disable'

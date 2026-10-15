@@ -1,0 +1,3 @@
+config settings 'main'
+    option include_prerelease '1'
+    option pinned_version '26.7.28'

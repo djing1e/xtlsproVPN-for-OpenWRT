@@ -1,0 +1,15 @@
+{
+  "xtlsprovpn-viewer": {
+    "description": "xtlsproVPN status only; no config, subscription, file or shell access",
+    "read": {
+      "ubus": {
+        "xray_lab": [
+          "status",
+          "diagnostics",
+          "job",
+          "logs"
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,353 @@
+#!/bin/sh
+set -eu
+umask 077
+
+BIN=/usr/libexec/forkop-xray/xray
+HELPER=/usr/share/xray/lab/core_update.uc
+CONTROL=/usr/share/xray/lab/control.uc
+RUN=/var/run/xray-lab-control
+ACTION=${1:-status}
+WORK=
+ACTIVATED=0
+PHASE=starting
+AVAILABLE=
+export FX_CORE_CHANNEL=stable
+export FX_CORE_ALLOW_PRERELEASE="${FX_CORE_ALLOW_PRERELEASE:-$(uci -q get xray_lab_core.main.include_prerelease || :)}"
+if [ "$FX_CORE_ALLOW_PRERELEASE" = 1 ]; then
+    export FX_CORE_CHANNEL=official
+fi
+
+REQUESTED=${2:-}
+case "$ACTION" in
+    install|test)
+        case "$REQUESTED" in
+            ''|*[!0-9.]*)
+                echo 'Укажите конкретную версию: test VERSION или install VERSION'
+                exit 2
+                ;;
+        esac
+        printf '%s\n' "$REQUESTED" |
+            grep -Eq '^[0-9]{1,3}\.[0-9]{1,2}\.[0-9]{1,2}$' || exit 2
+        ;;
+esac
+
+
+case "$ACTION" in
+    status)
+        if [ -f "$RUN/core-update.json" ]; then
+            cat "$RUN/core-update.json"
+        else
+            echo '{"phase":"idle","message":"Проверка обновлений ещё не выполнялась"}'
+        fi
+        exit 0
+        ;;
+    check|list|test|install|rollback|purge-backup) ;;
+    *) echo 'Usage: xray-lab-core status|list|check|test VERSION|install VERSION|rollback'; exit 2 ;;
+esac
+
+[ "$(uname -m)" = aarch64 ] || {
+    echo 'Эта версия обновлятора поддерживает только aarch64.'
+    exit 1
+}
+[ -f "$BIN" ] && [ ! -L "$BIN" ] || {
+    echo 'Неожиданный путь или тип файла ядра.'
+    exit 1
+}
+[ "$(uci -q get xray_core.general.xray_bin)" = "$BIN" ] || {
+    echo 'В конфигурации выбран другой бинарник Xray.'
+    exit 1
+}
+
+mkdir -p "$RUN"
+exec 9>"$RUN/action.lock"
+flock -n 9 || {
+    echo 'Выполняется другая операция Xray.'
+    exit 1
+}
+
+INSTALLED=$("$BIN" version | awk 'NR==1 {print $2}')
+WORK=$(mktemp -d /tmp/xray-core-update.XXXXXX)
+
+record() {
+    PHASE=$1
+    echo "$2"
+    ucode "$HELPER" record "$ACTION" "$1" "$2" "$INSTALLED" "$AVAILABLE"
+}
+
+restore_previous() {
+    echo 'Возвращаем предыдущее ядро...'
+    rm -f "$BIN.recover"
+    ln "$BIN.previous" "$BIN.recover" || return 1
+    mv -f "$BIN.recover" "$BIN" || return 1
+    sync
+    rm -f "$RUN/core-version"
+    /etc/init.d/xray_core restart 9>&- || return 1
+}
+
+finish() {
+    rc=$?
+    trap - EXIT HUP INT TERM
+
+    if [ "$rc" != 0 ]; then
+        if [ "$ACTIVATED" = 1 ]; then
+            if restore_previous; then
+                ucode "$HELPER" record "$ACTION" rolled_back \
+                    'Новое ядро не прошло проверку; предыдущее возвращено. Проверьте доступность прокси.' \
+                    "$INSTALLED" "$AVAILABLE" || :
+            else
+                echo 'ОШИБКА: автоматическое восстановление не завершилось.' >&2
+                ucode "$HELPER" record "$ACTION" recovery_failed \
+                    'Не удалось завершить автоматический откат.' \
+                    "$INSTALLED" "$AVAILABLE" || :
+            fi
+        else
+            ucode "$HELPER" record "$ACTION" error \
+                "Операция остановлена на этапе: $PHASE. Ядро не заменено." \
+                "$INSTALLED" "$AVAILABLE" || :
+        fi
+    fi
+
+    rm -f "$BIN.next" "$BIN.previous.new"
+    [ -z "$WORK" ] || rm -rf "$WORK"
+    exit "$rc"
+}
+trap finish EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+ports() {
+    ucode "$HELPER" ports
+}
+
+fetch() {
+    url=$1
+    output=$2
+    limit=$3
+    rm -f "$output"
+
+    echo 'Загрузка напрямую...'
+    if curl --silent --show-error --fail --location \
+        --proto '=https' --proto-redir '=https' \
+        --noproxy '*' --connect-timeout 5 --max-time 25 \
+        --max-filesize "$limit" \
+        --output "$output" "$url"; then
+        return 0
+    fi
+
+    for port in $(ports); do
+        echo "Повтор через тоннель, локальный порт $port..."
+        rm -f "$output"
+        if curl --silent --show-error --fail --location \
+            --proto '=https' --proto-redir '=https' \
+            --noproxy '' --proxy "socks5h://127.0.0.1:$port" \
+            --connect-timeout 5 --max-time 90 \
+            --max-filesize "$limit" \
+            --output "$output" "$url"; then
+            return 0
+        fi
+    done
+
+    rm -f "$output"
+    return 1
+}
+
+pinned_health() {
+    for port in $(ports); do
+        code=$(curl --silent --fail \
+            --proto '=https' --noproxy '' \
+            --proxy "socks5h://127.0.0.1:$port" \
+            --connect-timeout 5 --max-time 12 \
+            --output /dev/null --write-out '%{http_code}' \
+            https://cp.cloudflare.com/generate_204) || continue
+        [ "$code" != 204 ] || return 0
+    done
+    return 1
+}
+
+validate() {
+    candidate=$1
+    record validating 'Проверяем версию и конфигурацию новым ядром...'
+    "$candidate" version
+    XRAY_LOCATION_ASSET=/usr/share/xray \
+        GOMEMLIMIT=64MiB GOMAXPROCS=2 \
+        "$candidate" run -test -confdir /var/etc/xray
+}
+
+verify_running() {
+    for attempt in 1 2 3; do
+        sleep 3
+        /etc/init.d/xray_core running >/dev/null 2>&1 || continue
+
+        if ! ucode "$CONTROL" health > "$WORK/health.json"; then
+            continue
+        fi
+        [ "$(jsonfilter -i "$WORK/health.json" -e '@.proxy_ok')" = true ] ||
+            continue
+
+        if [ "$(uci -q get xray_core.general.transparent_proxy_enable || :)" = 1 ]; then
+            nslookup -type=A openwrt.org 127.0.0.1 \
+                > "$WORK/dns.txt" 2>&1 || continue
+            grep -q '^Name:' "$WORK/dns.txt" || continue
+            ucode "$CONTROL" status > "$WORK/runtime.json" || continue
+            [ "$(jsonfilter -i "$WORK/runtime.json" -e '@.interception.active')" = true ] ||
+                continue
+        fi
+
+        pinned_health || continue
+        return 0
+    done
+    return 1
+}
+
+
+if [ "$ACTION" = purge-backup ]; then
+    rm -f "$BIN.previous"
+    record cleared "Резервное ядро удалено. Работающий Xray не перезапускался."
+    exit 0
+fi
+
+if [ "$ACTION" = check ] || [ "$ACTION" = list ]; then
+    record release "Получаем каталог официальных релизов..."
+    fetch "https://api.github.com/repos/XTLS/Xray-core/releases?per_page=30" "$WORK/releases.json" 8388608
+    fetch "https://api.github.com/repos/XTLS/Xray-core/releases/latest" "$WORK/stable.json" 2097152
+    set -- "$WORK/releases.json" "$WORK/stable.json"
+    pinned=$(uci -q get xray_lab_core.main.pinned_version || :)
+    case "$pinned" in
+        ""|*[!0-9.]*) ;;
+        *)
+            if printf "%s\n" "$pinned" | grep -Eq "^[0-9]{1,3}\.[0-9]{1,2}\.[0-9]{1,2}$"; then
+                if fetch "https://api.github.com/repos/XTLS/Xray-core/releases/tags/v$pinned" "$WORK/pinned.json" 2097152; then
+                    set -- "$@" "$WORK/pinned.json"
+                fi
+            fi
+            ;;
+    esac
+    FX_CORE_CATALOG_FILE="$RUN/core-releases.json" ucode "$HELPER" release-catalog "$@" > "$WORK/versions"
+    AVAILABLE=$(head -n 1 "$WORK/versions")
+    record catalog "Каталог получен. Установлено: $INSTALLED. Автоматическая установка отключена."
+    echo "Версии выбранного фильтра: последние публикации, latest stable и закреплённая версия:"
+    cat "$WORK/versions"
+    exit 0
+fi
+
+if [ "$ACTION" = install ] || [ "$ACTION" = test ]; then
+    record release "Проверяем официальный релиз $REQUESTED..."
+    fetch "https://api.github.com/repos/XTLS/Xray-core/releases/tags/v$REQUESTED" "$WORK/selected.json" 2097152
+    AVAILABLE=$(ucode "$HELPER" release-catalog "$WORK/selected.json")
+    [ "$AVAILABLE" = "$REQUESTED" ] || {
+        echo "Версия не прошла проверку метаданных и выбранного фильтра."
+        exit 1
+    }
+    if [ "$ACTION" = install ] && [ "$AVAILABLE" = "$INSTALLED" ]; then
+        record current "Xray $INSTALLED уже установлен."
+        exit 0
+    fi
+fi
+
+/etc/init.d/xray_core running >/dev/null 2>&1 || {
+    echo 'Для установки и проверки отката Xray должен работать.'
+    exit 1
+}
+
+record preflight 'Проверяем рабочий тоннель перед изменением ядра...'
+pinned_health || {
+    echo 'Рабочая нода не прошла HTTPS-проверку. Замена отменена.'
+    exit 1
+}
+
+if [ "$ACTION" = rollback ]; then
+    test -x "$BIN.previous"
+    cp "$BIN.previous" "$WORK/xray"
+else
+    available_kb=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
+    [ "$available_kb" -ge 102400 ] || {
+        echo 'Для подготовки обновления требуется хотя бы 100 МиБ доступной RAM.'
+        exit 1
+    }
+
+    record download "Скачиваем Xray $AVAILABLE..."
+    url="https://github.com/XTLS/Xray-core/releases/download/v$AVAILABLE/Xray-linux-arm64-v8a.zip"
+    fetch "$url" "$WORK/core.zip" 67108864
+    fetch "$url.dgst" "$WORK/core.dgst" 16384
+
+    record checksum 'Проверяем SHA-256 архива...'
+    expected=$(ucode "$HELPER" checksum "$WORK/core.dgst" | tr 'A-F' 'a-f')
+    actual=$(sha256sum "$WORK/core.zip" | awk '{print $1}')
+    [ "$expected" = "$actual" ] || {
+        echo 'SHA-256 не совпадает. Замена отменена.'
+        exit 1
+    }
+
+    record extract 'Извлекаем только бинарник xray...'
+    size=$(unzip -l "$WORK/core.zip" xray | awk '$NF=="xray" {print $1}')
+    case "$size" in ''|*[!0-9]*) echo 'Неверный состав архива'; exit 1 ;; esac
+    [ "$size" -gt 0 ] && [ "$size" -le 67108864 ] || exit 1
+
+    (
+        ulimit -f 131072
+        unzip -p "$WORK/core.zip" xray > "$WORK/xray"
+    )
+    [ "$(wc -c < "$WORK/xray")" -eq "$size" ]
+    rm -f "$WORK/core.zip" "$WORK/core.dgst"
+fi
+
+chmod 700 "$WORK/xray"
+validate "$WORK/xray"
+
+candidate_version=$("$WORK/xray" version | awk 'NR==1 {print $2}')
+if [ "$ACTION" = install ] || [ "$ACTION" = test ]; then
+    [ "$candidate_version" = "$AVAILABLE" ] || {
+        echo 'Версия бинарника отличается от выбранного релиза.'
+        exit 1
+    }
+fi
+
+
+if [ "$ACTION" = test ]; then
+    record compatible "Xray $candidate_version принимает текущую конфигурацию. Ядро не заменено."
+    exit 0
+fi
+
+required_kb=$(( ($(wc -c < "$WORK/xray") + 1023) / 1024 + 8192 ))
+free_kb=$(df -Pk /overlay | awk 'NR==2 {print $4}')
+[ "$free_kb" -ge "$required_kb" ] || {
+    echo 'Недостаточно свободного места для безопасной замены.'
+    exit 1
+}
+
+record staging 'Записываем проверенное ядро и сохраняем предыдущую версию...'
+cp "$WORK/xray" "$BIN.next"
+chmod 755 "$BIN.next"
+
+expected=$(sha256sum "$WORK/xray" | awk '{print $1}')
+actual=$(sha256sum "$BIN.next" | awk '{print $1}')
+[ "$expected" = "$actual" ] || exit 1
+
+rm -f "$BIN.previous.new"
+ln "$BIN" "$BIN.previous.new"
+mv -f "$BIN.previous.new" "$BIN.previous"
+sync
+
+record restarting 'Переключаем ядро и перезапускаем Xray...'
+ACTIVATED=1
+mv -f "$BIN.next" "$BIN"
+sync
+rm -f "$RUN/core-version"
+
+/etc/init.d/xray_core restart 9>&-
+
+record verifying 'Проверяем процесс, HTTPS, DNS и перехват LAN...'
+verify_running || {
+    echo 'Проверка после замены не пройдена.'
+    exit 1
+}
+
+ACTIVATED=0
+INSTALLED=$candidate_version
+if [ "$(uci -q get xray_lab_core.main.keep_previous || :)" = 1 ]; then
+    record done "Работает Xray $INSTALLED. Предыдущая версия сохранена."
+else
+    rm -f "$BIN.previous"
+    record done "Работает Xray $INSTALLED. После успешной проверки резервное ядро удалено."
+fi

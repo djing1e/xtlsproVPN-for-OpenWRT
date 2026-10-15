@@ -1,0 +1,49 @@
+{
+  "admin/services/forkop-xray": {
+    "title": "xtlsproVPN",
+    "order": 65,
+    "action": {
+      "type": "firstchild"
+    },
+    "depends": {
+      "acl": [
+        "luci-app-forkop-xray"
+      ],
+      "uci": {
+        "xray_core": true
+      }
+    }
+  },
+  "admin/services/forkop-xray/dashboard": {
+    "title": "Дашборд",
+    "order": 0,
+    "action": {
+      "type": "view",
+      "path": "xray/dashboard_052"
+    }
+  },
+  "admin/services/forkop-xray/settings": {
+    "title": "Настройки",
+    "order": 1,
+    "action": {
+      "type": "view",
+      "path": "xray/settings_052"
+    }
+  },
+  "admin/services/forkop-xray/diagnostics": {
+    "title": "Диагностика",
+    "order": 2,
+    "action": {
+      "type": "view",
+      "path": "xray/diagnostics_052"
+    }
+  },
+  "admin/services/forkop-xray/monitoring": {
+    "title": "Мониторинг",
+    "order": 3,
+    "action": {
+      "type": "view",
+      "path": "xray/monitoring_compact_052"
+    }
+  }
+}

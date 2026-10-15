@@ -1,0 +1,185 @@
+#!/bin/sh
+set -eu
+umask 077
+RUN=/var/run/xray-lab-control
+LIB=/usr/share/xray/lab
+mkdir -p "$RUN"
+case "${1:-status}" in
+status) exec ucode "$LIB/dns_control.uc" status ;;
+launch)
+    action=${2:-};id=${3:-}
+    case "$action" in test|apply|route_test|route_apply) ;; *) exit 2 ;; esac
+    case "$id" in ''|*[!a-fA-F0-9-]*) exit 2 ;; esac
+    [ "${#id}" = 36 ] || exit 2
+    input="$RUN/dns-input-$id.json"
+    test -f "$input"
+    exec 9>"$RUN/action.lock"
+    if ! flock -n 9; then
+        rm -f "$input"
+        echo '{"error":"Выполняется другая операция Xray"}'
+        exit 0
+    fi
+    ucode "$LIB/dns_control.uc" jobset "$id" pending "$action" preparing 'Подготовка настроек…' 0
+    (trap '' HUP; exec "$0" worker "$action" "$id") </dev/null >"$RUN/dns-worker.log" 2>&1 &
+    echo '{"ok":true}'
+    ;;
+worker)
+    action=$2;id=$3;input="$RUN/dns-input-$id.json"
+    WORK=$(mktemp -d /tmp/xray-dns-apply.XXXXXX)
+    CORE_PID=;TTL_PID=;APPLIED=0;ROUTING=0;PHASE=preparing;ERROR_MESSAGE=
+    previous_ttl_enabled=0
+    /etc/init.d/xray_dns_ttl enabled >/dev/null 2>&1 && previous_ttl_enabled=1
+    phase() {
+        PHASE=$1
+        ucode "$LIB/dns_control.uc" jobset "$id" running "$action" "$1" "$2" "$$"
+        echo "$2"
+    }
+    stop_probe() {
+        if [ -n "$TTL_PID" ]; then kill "$TTL_PID" 2>/dev/null || :; wait "$TTL_PID" 2>/dev/null || :;TTL_PID=;fi
+        if [ -n "$CORE_PID" ]; then kill "$CORE_PID" 2>/dev/null || :; wait "$CORE_PID" 2>/dev/null || :;CORE_PID=;fi
+    }
+    cleanup() {
+        rc=$?;trap - EXIT HUP INT TERM
+        stop_probe
+        unset FX_DNS_CONFIG_DIR XRAY_UCI_CONFIG_DIR
+        if [ "$rc" != 0 ]; then
+            message=${ERROR_MESSAGE:-"Проверка не пройдена: $PHASE. Рабочие настройки не изменены."}
+            if [ "$APPLIED" = 1 ]; then
+                if [ "$ROUTING" = 1 ] && [ -f "$WORK/previous-core" ];then
+                    cp -p "$WORK/previous-core" /etc/config/xray_core.rules-restore
+                    mv /etc/config/xray_core.rules-restore /etc/config/xray_core
+                fi
+                ucode "$LIB/dns_cache.uc" rollback 0 "$WORK" || :
+                if [ -f "$WORK/previous" ]; then
+                    cp -p "$WORK/previous" /etc/config/xray_lab_dns.restore
+                    mv /etc/config/xray_lab_dns.restore /etc/config/xray_lab_dns
+                else rm -f /etc/config/xray_lab_dns;fi
+                if [ "$previous_ttl_enabled" = 1 ];then /etc/init.d/xray_dns_ttl enable;else /etc/init.d/xray_dns_ttl disable;fi
+                /etc/init.d/xray_dns_ttl restart 9>&- || :
+                if /etc/init.d/xray_core restart 9>&-;then
+                    message='Новые настройки не прошли проверку. Предыдущие возвращены; проверьте соединение.'
+                else message='Восстановление настроек выполнено, но Xray не запустился. Откройте диагностику.';fi
+            fi
+            ucode "$LIB/dns_control.uc" jobset "$id" failed "$action" "$PHASE" "$message" "$$" || :
+        fi
+        rm -f "$input" /etc/config/xray_lab_dns.dns-new
+        {
+            tail -c 16384 "$RUN/dns-worker.log" 2>/dev/null || :
+            for log in core.log probe-error.log ttl.log;do
+                if [ -s "$WORK/$log" ];then printf '\n--- %s ---\n' "$log";tail -c 8192 "$WORK/$log";fi
+            done
+        } > "$RUN/dns-last.log"
+        chmod 600 "$RUN/dns-last.log"
+        rm -rf "$WORK"
+        exit "$rc"
+    }
+    trap cleanup EXIT
+    trap 'exit 1' HUP INT TERM
+    phase preparing 'Проверяем адреса и интерфейсы…'
+    cp -p /etc/config/xray_core "$WORK/xray_core"
+    cp -p /etc/config/xray_core "$WORK/previous-core"
+    original=$(sha256sum "$WORK/previous-core" | awk '{print $1}')
+    case "$action" in
+        route_test|route_apply)
+            ROUTING=1
+            ucode "$LIB/routing_control.uc" "$input" "$WORK"
+            ucode "$LIB/dns_control.uc" stage "$WORK/dns-options.json" "$WORK";;
+        *)ucode "$LIB/dns_control.uc" stage "$input" "$WORK";;
+    esac
+    strategy=$(jsonfilter -i "$WORK/options.json" -e '@.strategy')
+    enabled=$(jsonfilter -i "$WORK/options.json" -e '@.enabled')
+    ttl_enabled=$(jsonfilter -i "$WORK/options.json" -e '@.ttl_enabled')
+    ttl=$(jsonfilter -i "$WORK/options.json" -e '@.ttl')
+    export FX_DNS_CONFIG_DIR="$WORK" XRAY_UCI_CONFIG_DIR="$WORK"
+    phase validating 'Генерируем и проверяем конфигурацию Xray и nftables…'
+    ucode /usr/share/xray/gen_config.uc > "$WORK/config.json"
+    XRAY_LOCATION_ASSET=/usr/share/xray GOMEMLIMIT=64MiB GOMAXPROCS=2 /usr/libexec/forkop-xray/xray run -test -c "$WORK/config.json"
+    printf 'table inet fx_dns_check {\n' > "$WORK/firewall.nft"
+    utpl /usr/share/xray/firewall_include.ut >> "$WORK/firewall.nft"
+    printf '}\n' >> "$WORK/firewall.nft"
+    nft -c -f "$WORK/firewall.nft"
+    utpl /usr/share/xray/dnsmasq_include.ut > "$WORK/dnsmasq.include"
+    # OpenWrt's main configuration already defines cache-size. Reject duplicate
+    # singleton options in our include before changing the working services.
+    printf 'cache-size=1000\nconf-file=%s\n' "$WORK/dnsmasq.include" > "$WORK/dnsmasq-check.conf"
+    dnsmasq --test --conf-file="$WORK/dnsmasq-check.conf"
+    available_kb=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
+    [ "${available_kb:-0}" -ge 65536 ] || { ERROR_MESSAGE='Для отдельной проверки требуется 64 МиБ доступной RAM. Рабочие настройки не изменены.';echo "$ERROR_MESSAGE";exit 1; }
+    phase resolver 'Проверяем DNS отдельным процессом; основной тоннель продолжает работать…'
+    ucode "$LIB/dns_control.uc" probe-config "$WORK/config.json" "$WORK/probe.json" "$WORK/probe-error.log"
+    XRAY_LOCATION_ASSET=/usr/share/xray GOMEMLIMIT=64MiB GOMAXPROCS=2 /usr/libexec/forkop-xray/xray run -c "$WORK/probe.json" > "$WORK/core.log" 2>&1 9>&- &
+    CORE_PID=$!
+    sleep 2
+    kill -0 "$CORE_PID"
+    query_port=15354
+    if [ "$enabled" = 1 ] && [ "$ttl_enabled" = 1 ];then
+        ucode "$LIB/dns_ttl.uc" "$ttl" 0 15354 "$WORK/ttl-port" > "$WORK/ttl.log" 2>&1 9>&- &
+        TTL_PID=$!;sleep 1;kill -0 "$TTL_PID"
+        query_port=$(cat "$WORK/ttl-port")
+    fi
+    # The balancer needs real observations before DNS can use its selected node.
+    # Retry the actual resolver, not just process existence or an arbitrary sleep.
+    query() {
+        if [ "$enabled" = 1 ] && [ "$ttl_enabled" = 1 ];then
+            ucode "$LIB/dns_query.uc" "$query_port" "$strategy" "$1" "$ttl"
+        else ucode "$LIB/dns_query.uc" "$query_port" "$strategy" "$1";fi
+    }
+    resolver_ok=0
+    for attempt in 1 2 3 4;do
+        echo "DNS readiness attempt $attempt: UDP + TCP"
+        if query udp && query tcp;then resolver_ok=1;break;fi
+        sleep 2
+    done
+    [ "$resolver_ok" = 1 ] || { ERROR_MESSAGE='DNS не ответил по UDP/TCP после повторных проверок. Подробности: dns-last.log. Рабочие настройки не изменены.';exit 1; }
+    stop_probe
+    if [ "$action" = test ] || [ "$action" = route_test ];then
+        ucode "$LIB/dns_control.uc" jobset "$id" done "$action" verified 'Конфигурация и DNS по UDP/TCP проверены. Настройки не применялись.' "$$"
+        exit 0
+    fi
+    /etc/init.d/xray_core running >/dev/null 2>&1 || { echo 'Для применения запустите прокси';exit 1;}
+    [ "$original" = "$(sha256sum /etc/config/xray_core | awk '{print $1}')" ] || { echo 'Конфигурация изменена другой операцией';exit 1;}
+    phase applying 'Применяем настройки и проверяем рабочий DNS…'
+    [ ! -f /etc/config/xray_lab_dns ] || cp -p /etc/config/xray_lab_dns "$WORK/previous"
+    cp "$WORK/xray_lab_dns" /etc/config/xray_lab_dns.dns-new
+    chmod 600 /etc/config/xray_lab_dns.dns-new
+    APPLIED=1
+    mv /etc/config/xray_lab_dns.dns-new /etc/config/xray_lab_dns
+    if [ "$ROUTING" = 1 ];then
+        cp "$WORK/xray_core" /etc/config/xray_core.rules-new
+        chmod 600 /etc/config/xray_core.rules-new
+        mv /etc/config/xray_core.rules-new /etc/config/xray_core
+    fi
+    cache_on=0
+    if [ "$enabled" = 1 ] && [ "$ttl_enabled" = 1 ];then cache_on=1;fi
+    ucode "$LIB/dns_cache.uc" sync "$cache_on" "$WORK"
+    unset FX_DNS_CONFIG_DIR XRAY_UCI_CONFIG_DIR
+    if [ "$enabled" = 1 ] && [ "$ttl_enabled" = 1 ];then /etc/init.d/xray_dns_ttl enable;else /etc/init.d/xray_dns_ttl disable;fi
+    if [ "$enabled" = 1 ] && [ "$ttl_enabled" = 1 ];then /etc/init.d/xray_dns_ttl restart 9>&-;else /etc/init.d/xray_dns_ttl stop 9>&- || :;fi
+    /etc/init.d/xray_core restart 9>&-
+    sleep 3
+    /etc/init.d/xray_core running >/dev/null 2>&1
+    phase live_dns 'Проверяем постоянный обработчик и dnsmasq после применения…'
+    for conf in /var/etc/dnsmasq.conf.*;do
+        [ ! -f "$conf" ] || dnsmasq --test --conf-file="$conf"
+    done
+    live_query() {
+        if [ "$enabled" = 1 ] && [ "$ttl_enabled" = 1 ];then
+            ucode "$LIB/dns_query.uc" 10553 "$strategy" "$1" "$ttl" &&
+            ucode "$LIB/dns_query.uc" 53 "$strategy" "$1" "$ttl"
+        else ucode "$LIB/dns_query.uc" 53 "$strategy" "$1";fi
+    }
+    live_ok=0
+    for attempt in 1 2 3 4;do
+        if live_query udp && live_query tcp;then live_ok=1;break;fi
+        sleep 2
+    done
+    [ "$live_ok" = 1 ] || { echo 'Рабочий DNS не прошёл проверку';exit 1; }
+    phase live_https 'Проверяем HTTPS через рабочий тоннель…'
+    ucode /usr/share/xray/lab/control.uc health > "$WORK/health.json"
+    [ "$(jsonfilter -i "$WORK/health.json" -e '@.proxy_ok')" = true ]
+    if [ "$enabled" = 1 ];then nft list chain inet fw4 fx_dns_redirect > /dev/null;fi
+    APPLIED=0
+    ucode "$LIB/dns_control.uc" jobset "$id" done "$action" applied 'Настройки применены. DNS и HTTPS через прокси работают.' "$$"
+    ;;
+*) exit 2 ;;
+esac

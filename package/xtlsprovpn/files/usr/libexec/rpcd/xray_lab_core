@@ -1,0 +1,102 @@
+#!/usr/bin/ucode
+let fs=require('fs');
+let op=ARGV[0],method=ARGV[1];
+let root='/var/run/xray-lab-control';
+
+function load(path,fallback) {
+    try { return json(fs.readfile(path) || '') || fallback; }
+    catch(e) { return fallback; }
+}
+
+if (op=='list') {
+    print('{"get":{},"launch":{"action":"","version":""},"settings":{"include_prerelease":"","pinned_version":""}}');
+    exit(0);
+}
+if (op!='call') exit(1);
+
+if (method=='get') {
+    let job=load(root+'/core-ui-job.json',{state:'idle'});
+    if (job.state=='running' &&
+        (!job.pid || !fs.stat('/proc/'+job.pid)))
+        job.state='interrupted';
+    if (job.state=='pending' && time()-job.updated>10)
+        job.state='interrupted';
+
+    let version=trim(fs.readfile(root+'/core-version') || '');
+    if (!version) {
+        let p=fs.popen('/usr/libexec/forkop-xray/xray version 2>/dev/null','r');
+        if (p) {
+            version=split(p.read('all') || '', '\n')[0];
+            p.close();
+        }
+    }
+    let preferences=require('uci').cursor().get_all('xray_lab_core','main') || {};
+    print(sprintf('%J',{
+        include_prerelease:preferences.include_prerelease=='1',
+        pinned_version:preferences.pinned_version || '',
+        installed:split(version,' ')[1] || null,
+        rollback_available:fs.stat('/usr/libexec/forkop-xray/xray.previous')!=null,
+        catalog:load(root+'/core-releases.json',{releases:[]}),
+        update:load(root+'/core-update.json',{}),
+        job
+    }));
+    exit(0);
+}
+
+if (method=='settings') {
+    let p;
+    try { p=json(fs.stdin.read('all') || '{}'); }
+    catch(e) { print('{"error":"Invalid request"}'); exit(0); }
+    let enabled=p.include_prerelease, pinned=p.pinned_version || '';
+    if (index(['0','1'],enabled)<0 || type(pinned)!='string' ||
+        (pinned && !match(pinned,/^[0-9]{1,3}\.[0-9]{1,2}\.[0-9]{1,2}$/))) {
+        print('{"error":"Недопустимые настройки версий"}'); exit(0);
+    }
+    let path='/etc/config/xray_lab_core';
+    if (!fs.stat(path)) {
+        if (!fs.writefile(path,"config settings 'main'\n")) {
+            print('{"error":"Не удалось создать настройки"}'); exit(0);
+        }
+        fs.chmod(path,0600);
+    }
+    let c=require('uci').cursor();
+    c.load('xray_lab_core');
+    if (!c.get_all('xray_lab_core','main')) {
+        print('{"error":"Раздел настроек не найден"}'); exit(0);
+    }
+    c.set('xray_lab_core','main','include_prerelease',enabled);
+    c.set('xray_lab_core','main','pinned_version',pinned);
+    if (!c.commit('xray_lab_core')) {
+        print('{"error":"Не удалось сохранить настройки"}'); exit(0);
+    }
+    fs.chmod(path,0600);
+    print('{"ok":true}');
+    exit(0);
+}
+
+if (method!='launch') {
+    print('{"error":"Unknown method"}');
+    exit(0);
+}
+let params;
+try { params=json(fs.stdin.read('all') || '{}'); }
+catch(e) { print('{"error":"Invalid request"}'); exit(0); }
+
+let action=params.action;
+let version=params.version || '';
+if (index(['list','test','install','rollback','purge-backup'],action)<0) {
+    print('{"error":"Unknown action"}'); exit(0);
+}
+if (index(['test','install'],action)>=0) {
+    if (type(version)!='string' ||
+        !match(version,/^[0-9]{1,3}\.[0-9]{1,2}\.[0-9]{1,2}$/)) {
+        print('{"error":"Выберите конкретную версию"}'); exit(0);
+    }
+} else version='';
+
+let p=fs.popen('/usr/bin/xray-lab-core-ui launch '+action+" '"+version+"' 2>/dev/null",'r');
+if (!p) { print('{"error":"Не удалось запустить операцию"}'); exit(0); }
+let body=p.read('all');
+if (p.close()!=0 || !body)
+    print('{"error":"Не удалось запустить операцию"}');
+else print(body);

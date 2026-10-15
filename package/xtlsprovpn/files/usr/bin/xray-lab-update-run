@@ -1,0 +1,51 @@
+#!/bin/sh
+set -u
+umask 077
+
+case "${1:-}" in
+    subscription) COMMAND=/usr/bin/xray-lab; OPERATION=sync ;;
+    routing) COMMAND=/usr/bin/xray-lab-routing; OPERATION=update ;;
+    *) echo 'Usage: xray-lab-update-run subscription|routing'; exit 1 ;;
+esac
+
+KIND=$1
+RUN=/var/run/xray-lab-control
+WRITER=/usr/share/xray/lab/update_record.uc
+
+mkdir -p "$RUN" || exit 1
+exec 7>"$RUN/update-$KIND.lock" || exit 1
+if ! flock -n 7; then
+    echo 'Такое обновление уже выполняется.'
+    exit 75
+fi
+
+LOG="$RUN/update-$KIND.log"
+export FX_UPDATE_TRACKED=1
+
+ucode "$WRITER" start "$KIND" "$$" || exit 1
+
+complete() {
+    rc=$?
+    trap - EXIT HUP INT TERM
+
+    tail -n 40 "$LOG" > "$RUN/update-$KIND.tail" 2>/dev/null || :
+    if ! ucode "$WRITER" finish "$KIND" "$rc"; then
+        echo 'Не удалось записать результат обновления.' >&2
+    fi
+
+    cat "$LOG" 2>/dev/null || :
+    # Keep only a short private tail after completion.
+    if [ -f "$RUN/update-$KIND.tail" ]; then
+        cp "$RUN/update-$KIND.tail" "$LOG"
+    fi
+    rm -f "$RUN/update-$KIND.tail"
+    exit "$rc"
+}
+trap complete EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+"$COMMAND" "$OPERATION" > "$LOG" 2>&1 7>&-
+result=$?
+exit "$result"

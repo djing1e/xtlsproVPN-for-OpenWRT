@@ -1,0 +1,30 @@
+{
+    "luci-app-forkop-xray": {
+        "description": "Native Xray dashboard, diagnostics and interface monitor",
+        "read": {
+            "uci": [
+                "xray_core",
+                "forkop_xray"
+            ],
+            "ubus": {
+                "xray_lab": [
+                    "status",
+                    "diagnostics",
+                    "logs",
+                    "job"
+                ]
+            }
+        },
+        "write": {
+            "uci": [
+                "xray_core",
+                "forkop_xray"
+            ],
+            "ubus": {
+                "xray_lab": [
+                    "action"
+                ]
+            }
+        }
+    }
+}

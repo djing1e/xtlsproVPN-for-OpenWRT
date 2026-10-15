@@ -1,0 +1,179 @@
+#!/bin/sh
+
+# Track CLI, dashboard and cron updates through one entry point.
+if [ "${1:-}" = "sync" ] &&
+    [ "${FX_UPDATE_TRACKED:-}" != 1 ]; then
+    exec /usr/bin/xray-lab-update-run subscription
+fi
+set -eu
+umask 077
+mkdir -p /var/run/xray-lab-control
+if [ "${FX_LOCK_HELD:-0}" != 1 ] && [ "${1:-status}" != status ] && [ "${1:-status}" != nodes ]; then
+    exec 8>/var/run/xray-lab-control/action.lock
+    flock -n 8 || { echo 'Another Xray lab operation is running'; exit 1; }
+    export FX_LOCK_HELD=1
+fi
+case "${1:-status}" in
+sync)
+    exec 9>/var/run/xray-lab-sync.lock
+    flock -n 9 || { echo 'Subscription sync is already running'; exit 1; }
+    echo 'Downloading current subscription...'
+    FX_NO_RELOAD=1 FX_FALLBACK_SOCKS=127.0.0.1:1080 forkop-xray update
+    CHECK=$(mktemp -d /tmp/xray-lab-sync.XXXXXX)
+    trap 'rm -rf "$CHECK"' EXIT
+    : > "$CHECK/xray_core"
+    ucode /usr/share/xray/lab_prepare.uc "$CHECK"
+    XRAY_UCI_CONFIG_DIR="$CHECK" ucode /usr/share/xray/gen_config.uc > "$CHECK/config.json"
+    XRAY_LOCATION_ASSET=/usr/share/xray /usr/libexec/forkop-xray/xray run -test -c "$CHECK/config.json"
+    printf 'table inet xray_lab_check {\n' > "$CHECK/firewall.nft"
+    XRAY_UCI_CONFIG_DIR="$CHECK" utpl /usr/share/xray/firewall_include.ut >> "$CHECK/firewall.nft"
+    printf '}\n' >> "$CHECK/firewall.nft"
+    nft -c -f "$CHECK/firewall.nft"
+
+    if /etc/init.d/xray_core running >/dev/null 2>&1 &&
+        ucode - "$CHECK" <<'UC_COMPARE'
+let cursor = require('uci').cursor;
+
+function normalized(dir) {
+    let c = cursor(dir);
+    c.load('xray_core');
+    let data = c.get_all('xray_core') || {};
+
+    return map(sort(keys(data)), section => [
+        section,
+        map(sort(filter(keys(data[section]), option =>
+            substr(option, 0, 1) != '.' &&
+            !(section == 'general' &&
+              option == 'transparent_proxy_enable')
+        )), option => [option, data[section][option]])
+    ]);
+}
+
+let current = normalized(null);
+let candidate = normalized(ARGV[0]);
+
+exit(sprintf('%J', current) == sprintf('%J', candidate) ? 0 : 1);
+UC_COMPARE
+    then
+        echo 'Catalogue unchanged; running core retained'
+        "$0" nodes
+        exit 0
+    fi
+    was_active=0
+    if /etc/init.d/xray_core running >/dev/null 2>&1 &&
+        [ "$(uci -q get xray_core.general.transparent_proxy_enable || :)" = 1 ]; then was_active=1; fi
+    BACKUP=$(mktemp -d /etc/xray-lab-sync-backup.XXXXXX)
+    cp -p /etc/config/xray_core "$BACKUP/xray_core"
+    if /etc/init.d/xray_core running >/dev/null 2>&1; then /etc/init.d/xray_core stop 8>&- 9>&-; fi
+    cp "$CHECK/xray_core" /etc/config/xray_core.new
+    chmod 600 /etc/config/xray_core.new
+    mv /etc/config/xray_core.new /etc/config/xray_core
+    printf 'Catalogue backup: %s\n' "$BACKUP"
+    if [ "$was_active" = 1 ]; then "$0" start; fi
+    "$0" nodes
+    ;;
+nodes)
+    ucode - <<'UC'
+let c=require('uci').cursor().get_all('xray_core') || {};
+let g=c.general || {};
+for (let key,n in c) if (n['.type']=='servers')
+    printf('%s  %s  TCP=%s UDP=%s\n',key,n.alias || n.server,
+        index(g.tcp_balancer_v4 || [],key)>=0 ? 'selected':'-',
+        index(g.udp_balancer_v4 || [],key)>=0 ? 'selected':'-');
+UC
+    ;;
+start)
+    for name in forkop; do
+        if [ -x /etc/init.d/$name ] && /etc/init.d/$name running; then echo 'Original Forkop is running; stop this operation on the test router'; exit 1; fi
+    done
+    if nft list table inet forkop_xray >/dev/null 2>&1; then echo 'Previous LAN trial table still exists'; exit 1; fi
+    if /etc/init.d/xray_core running >/dev/null 2>&1; then
+        if [ "$(uci -q get xray_core.general.transparent_proxy_enable || :)" = 1 ] &&
+            nft list chain inet fw4 xray_prerouting >/dev/null 2>&1; then
+            /etc/init.d/xray_core enable 8>&- 9>&-
+            if [ -x /etc/init.d/xray_lab_monitor ]; then /etc/init.d/xray_lab_monitor enable 8>&- 9>&-; /etc/init.d/xray_lab_monitor start 8>&- 9>&-; fi
+            echo 'Xray lab is already running with LAN interception'; exit 0
+        fi
+        /etc/init.d/xray_core stop 8>&- 9>&-
+    fi
+    for family in -4 -6; do
+        if ip "$family" rule show | grep -Eq '^104:|fwmark (0xfb|251)(/| )|lookup 251'; then echo 'Policy routing table/mark 251 is occupied'; exit 1; fi
+        routes=$(ip "$family" route show table 251 2>/dev/null || :)
+        [ -z "$routes" ] || { echo 'Routing table 251 is occupied'; exit 1; }
+    done
+    for opt in flow_offloading flow_offloading_hw; do
+        [ "$(uci -q get "firewall.@defaults[0].$opt" || :)" != 1 ] || { echo 'Disable firewall flow offloading on the test router before starting'; exit 1; }
+    done
+    CHECK=$(mktemp -d /tmp/xray-base-check.XXXXXX)
+    trap 'rm -rf "$CHECK"' EXIT
+    echo 'Generating native Xray config...'
+    ucode /usr/share/xray/gen_config.uc > "$CHECK/config.json"
+    XRAY_LOCATION_ASSET=/usr/share/xray /usr/libexec/forkop-xray/xray run -test -c "$CHECK/config.json"
+    echo 'Checking native firewall template...'
+    printf 'table inet xray_lab_check {\n' > "$CHECK/firewall.nft"
+    utpl /usr/share/xray/firewall_include.ut >> "$CHECK/firewall.nft"
+    printf '}\n' >> "$CHECK/firewall.nft"
+    nft -c -f "$CHECK/firewall.nft"
+    # Confirm a real proxy request before replacing system DNS or enabling LAN.
+    uci set xray_core.general.transparent_proxy_enable=0
+    uci commit xray_core
+    uci set xray_core.general.fx_start_authorized='1'
+    uci commit xray_core
+    /etc/init.d/xray_core start 8>&- 9>&-
+    sleep 2
+    if ! /etc/init.d/xray_core running; then
+        /etc/init.d/xray_core stop 8>&- 9>&- || :
+        echo 'Xray could not stay running; inspect logread -e xray'; exit 1
+    fi
+    echo 'Checking actual HTTPS connectivity through the selected node...'
+    if ! curl --fail --silent --show-error --connect-timeout 10 --max-time 25 \
+        --noproxy '' --proxy socks5h://127.0.0.1:1080 https://api.ipify.org > "$CHECK/proxy-ip"; then
+        /etc/init.d/xray_core stop 8>&- 9>&- || :
+        echo 'Proxy request failed. LAN and system DNS were not enabled.'
+        echo 'Inspect /var/log/xray-lab-error.log for the outbound failure.'
+        exit 1
+    fi
+    printf 'Selected-node exit IP: '; cat "$CHECK/proxy-ip"; printf '\n'
+    echo 'Checking the native DNS resolver before replacing system DNS...'
+    if ! nslookup -type=A -timeout=5 -retry=1 openwrt.org 127.0.0.1:5300 > "$CHECK/dns-check" 2>&1 ||
+        ! grep -q '^Name:' "$CHECK/dns-check"; then
+        cat "$CHECK/dns-check"
+        /etc/init.d/xray_core stop 8>&- 9>&- || :
+        echo 'Native DNS check failed. LAN and system DNS were not enabled.'
+        exit 1
+    fi
+    uci set xray_core.general.transparent_proxy_enable=1
+    uci commit xray_core
+    /etc/init.d/xray_core restart 8>&- 9>&-
+    sleep 2
+    if ! /etc/init.d/xray_core running; then
+        /etc/init.d/xray_core stop 8>&- 9>&- || :
+        echo 'Xray did not remain running after LAN activation; lab stopped'; exit 1
+    fi
+    if ! nft list chain inet fw4 xray_prerouting >/dev/null 2>&1; then
+        /etc/init.d/xray_core stop 8>&- 9>&- || :
+        echo 'Native firewall include was not installed; lab stopped'; exit 1
+    fi
+    /etc/init.d/xray_core enable 8>&- 9>&-
+    if [ -x /etc/init.d/xray_lab_monitor ]; then /etc/init.d/xray_lab_monitor enable 8>&- 9>&-; /etc/init.d/xray_lab_monitor start 8>&- 9>&-; fi
+    addr=$(uci -q get xray_core.general.lab_address)
+    mask=$(uci -q get xray_core.general.lab_mask)
+    iface=$(uci -q get xray_core.general.lab_iface)
+    printf 'LAB ACTIVE: all clients on %s; gateway/DNS %s/%s.\n' "$iface" "$addr" "$mask"
+    echo 'All external IPv4 TCP/UDP and client DNS go through the selected node; local networks stay DIRECT.'
+    echo 'Stop: xray-lab stop. Access log: /var/log/xray-lab-access.log'
+    ;;
+stop)
+    /etc/init.d/xray_core stop 8>&- 9>&-
+    /etc/init.d/xray_core disable 8>&- 9>&-
+    uci set xray_core.general.transparent_proxy_enable=0
+    uci set xray_core.general.fx_start_authorized=0
+    uci commit xray_core
+    echo 'Lab stopped. Restore previous PC gateway/DNS settings.'
+    ;;
+status)
+    ubus call service list '{"name":"xray_core"}'
+    nft list chain inet fw4 xray_prerouting 2>/dev/null || :
+    ;;
+*) echo 'Usage: xray-lab start|stop|status|sync|nodes'; exit 1;;
+esac

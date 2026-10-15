@@ -1,0 +1,11 @@
+#!/bin/sh
+# Configs installed by the package are empty defaults. Existing conffiles survive upgrades.
+mkdir -p /etc/forkop-xray /var/run/xray-lab-control
+chmod 700 /etc/forkop-xray /var/run/xray-lab-control
+for file in /etc/config/forkop_xray /etc/config/xray_core /etc/config/xray_lab_dns /etc/config/xray_lab_core /etc/config/xray_lab_schedule; do
+    [ ! -f "$file" ] || chmod 600 "$file"
+done
+# Registration only: no core, firewall, DNS or LAN changes on installation.
+/etc/init.d/rpcd reload || :
+rm -f /tmp/luci-indexcache /tmp/luci-indexcache.*
+exit 0

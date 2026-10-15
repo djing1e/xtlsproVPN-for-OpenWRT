@@ -1,0 +1,6 @@
+config schedule 'main'
+    option subscription_enabled '0'
+    option subscription_hours '6'
+    option routing_enabled '0'
+    option routing_hours '6'
+    option routing_minute '15'

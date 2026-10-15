@@ -1,0 +1,114 @@
+#!/bin/sh
+set -eu
+umask 077
+RUN=/var/run/xray-lab-control
+UC=/usr/share/xray/lab/control.uc
+mkdir -p "$RUN"
+chmod 700 "$RUN"
+case "${1:-status}" in
+status|job|diagnostics|logs) exec ucode "$UC" "$1" ;;
+launch)
+    op=${2:-}
+    location=${3:-}
+    case "$op" in start|stop|restart|sync|select|latency|diagnose|recover) ;; *) echo '{"error":"Unknown action"}'; exit 1 ;; esac
+    if [ "$op" = select ]; then
+        case "$location" in auto|cfg??????) ;; *) echo '{"error":"Invalid location"}'; exit 1 ;; esac
+        case "$location" in *[!a-zA-Z0-9_-]*) exit 1 ;; esac
+    fi
+    exec 9>"$RUN/action.lock"
+    if ! flock -n 9; then echo '{"error":"Другая операция уже выполняется"}'; exit 0; fi
+    ucode "$UC" jobset pending "$op" 0
+    # Child owns fd 9 until completion. No request waits for network operations.
+    (trap '' HUP; exec "$0" worker "$op" "$location") </dev/null >"$RUN/job.log" 2>&1 &
+    ucode "$UC" job
+    ;;
+worker)
+    op=${2:-}; location=${3:-}
+    export FX_LOCK_HELD=1
+    ucode "$UC" jobset running "$op" "$$"
+    CHECK=
+    APPLY=0
+    running=0
+    finish() {
+        rc=$?
+        trap - EXIT HUP INT TERM
+        if [ "$rc" != 0 ] && [ "$APPLY" = 1 ] && [ "$op" = select ]; then
+            cp "$CHECK/previous" /etc/config/xray_core
+            if [ "$running" = 1 ]; then /etc/init.d/xray_core restart 8>&- 9>&- || :; fi
+            echo 'Failed selection; previous selection restored.'
+        fi
+        [ -z "$CHECK" ] || rm -rf "$CHECK"
+        if [ "$rc" = 0 ]; then ucode "$UC" jobset done "$op" "$$"; else ucode "$UC" jobset failed "$op" "$$"; fi
+        exit "$rc"
+    }
+    trap finish EXIT
+    trap '' HUP
+    trap 'exit 1' INT TERM
+    case "$op" in
+    start) /usr/bin/xray-lab start; ucode "$UC" health ;;
+    stop) /usr/bin/xray-lab stop ;;
+    restart) /usr/bin/xray-lab stop; /usr/bin/xray-lab start; ucode "$UC" health ;;
+    sync) /usr/bin/xray-lab sync; ucode "$UC" health ;;
+    diagnose) ucode "$UC" diagnose ;;
+    latency) ucode "$UC" latency ;;
+    select|recover)
+        if [ "$op" = recover ] && [ "$(uci -q get xray_core.general.transparent_proxy_enable || :)" != 1 ]; then exit 0; fi
+        CHECK=$(mktemp -d /tmp/xray-lab-apply.XXXXXX)
+        cp -p /etc/config/xray_core "$CHECK/xray_core"
+        cp -p /etc/config/xray_core "$CHECK/previous"
+        ucode "$UC" stage "$CHECK" "$location"
+        XRAY_UCI_CONFIG_DIR="$CHECK" ucode /usr/share/xray/gen_config.uc > "$CHECK/config.json"
+        XRAY_LOCATION_ASSET=/usr/share/xray GOMEMLIMIT=128MiB /usr/libexec/forkop-xray/xray run -test -c "$CHECK/config.json"
+        printf 'table inet xray_lab_check {\n' > "$CHECK/firewall.nft"
+        XRAY_UCI_CONFIG_DIR="$CHECK" utpl /usr/share/xray/firewall_include.ut >> "$CHECK/firewall.nft"
+        printf '}\n' >> "$CHECK/firewall.nft"
+        nft -c -f "$CHECK/firewall.nft"
+        running=0
+        /etc/init.d/xray_core running >/dev/null 2>&1 && running=1
+        cp "$CHECK/xray_core" /etc/config/xray_core.new
+        chmod 600 /etc/config/xray_core.new
+        mv /etc/config/xray_core.new /etc/config/xray_core
+        APPLY=1
+        if [ "$running" = 1 ] || [ "$op" = recover ]; then
+            /etc/init.d/xray_core restart 8>&- 9>&-
+            sleep 2
+            ok=0
+            for attempt in 1 2 3; do
+                if ucode "$UC" health | jsonfilter -e '@.proxy_ok' | grep -qx true; then ok=1; break; fi
+                sleep 1
+            done
+            if [ "$ok" != 1 ] && [ "$op" = select ]; then
+                cp "$CHECK/previous" /etc/config/xray_core
+                /etc/init.d/xray_core restart 8>&- 9>&-
+                echo 'Selected node failed HTTPS validation; previous selection restored.'
+                APPLY=0
+                exit 1
+            fi
+            [ "$ok" = 1 ] || exit 1
+        fi
+        ;;
+    *) exit 1 ;;
+    esac
+    ;;
+watch-loop)
+    while :; do
+        action=$(ucode "$UC" watch-step 2>/dev/null || :)
+        if [ "$action" = restart ]; then
+            logger -t xray-lab-watchdog 'Recovering native Xray after a confirmed interface or tunnel failure'
+            "$0" launch recover >/dev/null 2>&1 || :
+        fi
+        # Logs are tmpfs files; bound them without retaining copies in flash.
+        for file in /var/log/xray-lab-access.log /var/log/xray-lab-error.log; do
+            [ -f "$file" ] || continue
+            bytes=$(wc -c < "$file")
+            if [ "$bytes" -gt 1048576 ]; then
+                tail -n 100 "$file" > "$RUN/log-tail"
+                cat "$RUN/log-tail" > "$file"
+                rm -f "$RUN/log-tail"
+            fi
+        done
+        sleep 15
+    done
+    ;;
+*) echo 'Usage: xray-lab-control status|diagnostics|logs|job|launch ACTION [LOCATION]'; exit 1 ;;
+esac

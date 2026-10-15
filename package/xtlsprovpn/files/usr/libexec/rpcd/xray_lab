@@ -1,0 +1,25 @@
+#!/usr/bin/ucode
+let fs=require('fs');
+let op=ARGV[0], method=ARGV[1];
+if (op=='list') {
+    print('{"status":{},"diagnostics":{},"logs":{},"job":{},"action":{"action":"","location":""}}');
+    exit(0);
+}
+if (op!='call') exit(1);
+let params={};
+try { params=json(fs.stdin.read('all') || '{}'); } catch(e) { print('{"error":"Invalid request"}'); exit(0); }
+let args;
+if (index(['status','diagnostics','logs','job'],method)>=0) args=[method];
+else if (method=='action' && index(['start','stop','restart','sync','select','latency','diagnose'],params.action)>=0) {
+    let location=params.location || '';
+    if (params.action=='select' && !match(location,/^(auto|cfg[A-Za-z0-9_-]{6})$/)) {
+        print('{"error":"Invalid location"}'); exit(0);
+    }
+    args=['launch',params.action,location];
+} else { print('{"error":"Unknown action"}'); exit(0); }
+function quote(s) { return "'"+replace(''+s,/'/g,"'\\''")+"'"; }
+let p=fs.popen('/usr/bin/xray-lab-control '+join(' ',map(args,quote))+' 2>/dev/null','r');
+if (!p) { print('{"error":"Cannot run dashboard operation"}'); exit(0); }
+let body=p.read('all');
+if (p.close()!=0) print('{"error":"Dashboard operation failed"}');
+else print(body || '{}');

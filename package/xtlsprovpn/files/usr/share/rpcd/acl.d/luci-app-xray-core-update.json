@@ -1,0 +1,1 @@
+{ "luci-app-xray-core-update": { "description": "Xray core version selection and updates", "read": { "ubus": { "xray_lab_core": [ "get" ] } }, "write": { "ubus": { "xray_lab_core": [ "launch", "settings" ] } } } }

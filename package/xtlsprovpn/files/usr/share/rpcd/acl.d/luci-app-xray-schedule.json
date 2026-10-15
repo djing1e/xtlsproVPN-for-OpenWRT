@@ -1,0 +1,15 @@
+{
+    "luci-app-xray-schedule": {
+        "description": "Xray automatic update schedule",
+        "read": {
+            "ubus": {
+                "xray_lab_schedule": ["get"]
+            }
+        },
+        "write": {
+            "ubus": {
+                "xray_lab_schedule": ["save"]
+            }
+        }
+    }
+}
