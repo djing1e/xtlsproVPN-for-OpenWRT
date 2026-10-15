@@ -1,5 +1,7 @@
 "use strict";
 
+import { verified_tls_options } from "../common/tls.mjs";
+
 import { http_outbound } from "../protocol/http.mjs";
 import { shadowsocks_outbound } from "../protocol/shadowsocks.mjs";
 import { socks_outbound } from "../protocol/socks.mjs";
@@ -50,6 +52,7 @@ function server_outbound_recursive(t, server, tag, config) {
             outbound[k] = override_custom_config_recursive(outbound[k], custom_config_outbound[k]);
         }
     }
+    verified_tls_options(outbound);
     outbound["tag"] = tag;
     if (type(outbound["streamSettings"]) != "object") {
         outbound["streamSettings"] = {};

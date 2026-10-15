@@ -84,6 +84,7 @@ return baseclass.extend({
                 if(error) message=error;
 
                 const phases={
+                    cached:'Кандидат из RAM',
                     release:'Получение релизов',
                     preflight:'Проверка тоннеля',
                     download:'Загрузка',
@@ -94,7 +95,15 @@ return baseclass.extend({
                     restarting:'Перезапуск xtlsproVPN',
                     verifying:'Проверка соединения'
                 };
-                const selector=E('select',{
+                const transfer=data.progress || {};
+                const fresh=String(transfer.version || '')===String(selected) && transfer.updated>=(j.started || 0);
+                const progress=fresh?transfer:{};
+                const downloading=locked;
+                const percent=u.phase==='download' && progress.total>0?Math.min(100,Math.floor(progress.received*100/progress.total)):null;
+                const mib=v=>(Math.max(0,Number(v)||0)/1048576).toFixed(1)+' МиБ';
+                const elapsed=Math.max(1,(progress.updated || 0)-(progress.started || 0));
+                const speed=(progress.received || 0)/elapsed;
+                const selector=E('select' ,{
                     'class':'cbi-input-select',
                     disabled:locked?true:null,
                     'aria-label':'Версия xtlsproVPN',
@@ -183,12 +192,18 @@ return baseclass.extend({
                         locked?E('strong',{},(phases[u.phase] || 'Запуск операции')+'… '):E('span'),
                         E('span',{},message)
                     ]),
+                    downloading?E('div',{role:'status',style:'margin:12px 0'},[
+                        E('div',{role:'progressbar','aria-label':'Прогресс операции с ядром','aria-valuemin':'0','aria-valuemax':'100',...(percent==null?{}:{'aria-valuenow':String(percent)}),style:'width:100%;height:16px;background:#3a3a3a;border:1px solid #777;border-radius:8px;overflow:hidden'},[E('div',{style:'height:100%;background:#18b8a4;width:'+(percent==null?35:percent)+'%;'+(percent==null?'opacity:.65':'')},[])]),
+                        E('p',{},(percent==null?(phases[u.phase] || 'Ожидание ответа'):percent+'%')+' · '+mib(progress.received)+
+                            (progress.total>0?' / '+mib(progress.total):'')+' · '+mib(speed)+'/с · '+
+                            (progress.via==='proxy'?'через тоннель':progress.via==='direct'?'напрямую':'ожидание счётчика'))
+                    ]):E('span'),
                     E('p',{style:'opacity:.75;font-size:.9em'},
                         'При первой установке проверяется минимальная конфигурация; прокси не запускается. После добавления подписки нужна проверка соединения. Prerelease доступны только при включённом переключателе. Перед установкой конфигурация проверяется повторно. По умолчанию резервное ядро удаляется после успешной проверки запуска.')
                 );
             }
             draw();
-            poll.add(refresh,3);
+            poll.add(refresh,2);
             return body;
         }).catch(function(e){
             return E('div',{'class':'alert-message warning'},

@@ -30,6 +30,19 @@ if (method=='get') {
             p.close();
         }
     }
+    let progress=load(root+'/core-progress.json',{});
+    let update=load(root+'/core-update.json',{});
+    // Fallback if an older helper did not publish transfer counters.
+    if (job.state=='running' && update.phase=='download' && (!progress.updated || progress.updated<(job.started || 0))) {
+        for (let directory in fs.glob('/tmp/xray-core-update.*') || []) {
+            let stat=fs.stat(directory+'/core.zip');
+            if (!stat || stat.mtime<(job.started || 0)) continue;
+            let release=load(directory+'/selected.json',{});
+            let asset=filter(release.assets || [],a=>a.name=='Xray-linux-arm64-v8a.zip')[0];
+            progress={received:stat.size,total:asset?.size || 0,version:update.available,
+                started:job.started,updated:time(),via:'unknown',source:'file'};
+        }
+    }
     let preferences=require('uci').cursor().get_all('xray_lab_core','main') || {};
     print(sprintf('%J',{
         include_prerelease:preferences.include_prerelease=='1',
@@ -37,7 +50,7 @@ if (method=='get') {
         installed:split(version,' ')[1] || null,
         rollback_available:fs.stat('/usr/libexec/forkop-xray/xray.previous')!=null,
         catalog:load(root+'/core-releases.json',{releases:[]}),
-        update:load(root+'/core-update.json',{}),
+        update,progress,ui_revision:'transfer2',
         log:substr(fs.readfile(root+'/core-ui.log') || '', -2000),
         job
     }));

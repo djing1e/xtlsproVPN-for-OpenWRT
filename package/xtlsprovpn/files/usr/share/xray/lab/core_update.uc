@@ -2,6 +2,22 @@
 let fs=require('fs');
 let op=ARGV[0];
 
+if (op=='asset-size') {
+    let r=json(fs.readfile(ARGV[1]) || '{}');
+    let asset=filter(r.assets || [], a=>a.name=='Xray-linux-arm64-v8a.zip')[0];
+    if (!asset || type(asset.size)!='int' || asset.size<=0 || asset.size>67108864) die('Invalid asset size');
+    print(asset.size); exit(0);
+}
+if (op=='progress') {
+    let received=max(0,int(ARGV[1])), total=max(0,int(ARGV[2]));
+    let value={received,total,started:int(ARGV[3]),updated:time(),via:ARGV[4],version:ARGV[5]};
+    let path='/var/run/xray-lab-control/core-progress.json';
+    if (!fs.writefile(path+'.new',sprintf('%J',value))) die('Cannot write download progress');
+    fs.chmod(path+'.new',0600);
+    if (!fs.rename(path+'.new',path)) die('Cannot commit download progress');
+    exit(0);
+}
+
 if (op=='check') exit(0);
 
 

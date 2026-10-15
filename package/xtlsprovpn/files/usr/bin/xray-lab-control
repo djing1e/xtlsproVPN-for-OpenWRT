@@ -44,13 +44,18 @@ worker)
     trap finish EXIT
     trap '' HUP
     trap 'exit 1' INT TERM
+    require_health() {
+        ucode "$UC" health > "$RUN/action-health.json"
+        cat "$RUN/action-health.json"
+        [ "$(jsonfilter -i "$RUN/action-health.json" -e '@.proxy_ok')" = true ]
+    }
     case "$op" in
-    start) /usr/bin/xray-lab start; ucode "$UC" health ;;
+    start) /usr/bin/xray-lab start; require_health ;;
     stop) /usr/bin/xray-lab stop ;;
-    restart) /usr/bin/xray-lab stop; /usr/bin/xray-lab start; ucode "$UC" health ;;
+    restart) /usr/bin/xray-lab stop; /usr/bin/xray-lab start; require_health ;;
     sync)
         /usr/bin/xray-lab refresh
-        if /etc/init.d/xray_core running >/dev/null 2>&1; then ucode "$UC" health; fi
+        if /etc/init.d/xray_core running >/dev/null 2>&1; then require_health; fi
         ;;
     diagnose) ucode "$UC" diagnose ;;
     latency) ucode "$UC" latency ;;
@@ -110,6 +115,16 @@ watch-loop)
                 rm -f "$RUN/log-tail"
             fi
         done
+        # Candidate cores stay in tmpfs and expire after 30 minutes.
+        (
+            exec 7>"$RUN/action.lock"
+            flock -n 7 || exit 0
+            cache="$RUN/core-candidate"
+            [ -d "$cache" ] || exit 0
+            expires=$(cat "$cache/expires" 2>/dev/null || :)
+            case "$expires" in ''|*[!0-9]*) rm -rf "$cache";;
+                *) [ "$expires" -gt "$(date +%s)" ] || rm -rf "$cache";; esac
+        )
         sleep 15
     done
     ;;

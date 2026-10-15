@@ -22,9 +22,10 @@ export function fallbacks(proxy, config) {
 };
 
 export function tls_outbound_settings(server, protocol) {
+    if (server[protocol + "_tls_insecure"] == "1")
+        die("TLS: allowInsecure=true is unsupported; configure pinnedPeerCertSha256 or verifyPeerCertByName in the subscription");
     let result = {
         serverName: server[protocol + "_tls_host"],
-        allowInsecure: server[protocol + "_tls_insecure"] != "0",
         fingerprint: server[protocol + "_tls_fingerprint"] || ""
     };
 
@@ -82,4 +83,17 @@ export function reality_inbound_settings(proxy, protocol_name) {
         maxTimeDiff: proxy[protocol_name + "_reality_max_time_diff"],
         shortIds: proxy[protocol_name + "_reality_short_ids"],
     };
+};
+
+// Keep verification enabled on all supported cores, including nested XHTTP download TLS.
+export function verified_tls_options(v) {
+    if (type(v)=='array') { for (let x in v) verified_tls_options(x); }
+    else if (type(v)=='object') {
+        if (v.tlsSettings!=null && type(v.tlsSettings)=='object') {
+            if (v.tlsSettings.allowInsecure===true)
+                die('TLS: allowInsecure=true is unsupported; configure pinnedPeerCertSha256 or verifyPeerCertByName in the subscription');
+            delete v.tlsSettings.allowInsecure;
+        }
+        for (let k in keys(v)) verified_tls_options(v[k]);
+    }
 };

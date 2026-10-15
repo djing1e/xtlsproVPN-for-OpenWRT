@@ -20,62 +20,7 @@ refresh)
     /usr/bin/xray-lab-routing update
     ;;
 sync)
-    exec 9>/var/run/xray-lab-sync.lock
-    flock -n 9 || { echo 'Subscription sync is already running'; exit 1; }
-    echo 'Downloading current subscription...'
-    FX_NO_RELOAD=1 FX_FALLBACK_SOCKS=127.0.0.1:1080 forkop-xray update
-    CHECK=$(mktemp -d /tmp/xray-lab-sync.XXXXXX)
-    trap 'rm -rf "$CHECK"' EXIT
-    : > "$CHECK/xray_core"
-    ucode /usr/share/xray/lab_prepare.uc "$CHECK"
-    XRAY_UCI_CONFIG_DIR="$CHECK" ucode /usr/share/xray/gen_config.uc > "$CHECK/config.json"
-    XRAY_LOCATION_ASSET=/usr/share/xray /usr/libexec/forkop-xray/xray run -test -c "$CHECK/config.json"
-    printf 'table inet xray_lab_check {\n' > "$CHECK/firewall.nft"
-    XRAY_UCI_CONFIG_DIR="$CHECK" utpl /usr/share/xray/firewall_include.ut >> "$CHECK/firewall.nft"
-    printf '}\n' >> "$CHECK/firewall.nft"
-    nft -c -f "$CHECK/firewall.nft"
-
-    if /etc/init.d/xray_core running >/dev/null 2>&1 &&
-        ucode - "$CHECK" <<'UC_COMPARE'
-let cursor = require('uci').cursor;
-
-function normalized(dir) {
-    let c = cursor(dir);
-    c.load('xray_core');
-    let data = c.get_all('xray_core') || {};
-
-    return map(sort(keys(data)), section => [
-        section,
-        map(sort(filter(keys(data[section]), option =>
-            substr(option, 0, 1) != '.' &&
-            !(section == 'general' &&
-              option == 'transparent_proxy_enable')
-        )), option => [option, data[section][option]])
-    ]);
-}
-
-let current = normalized(null);
-let candidate = normalized(ARGV[0]);
-
-exit(sprintf('%J', current) == sprintf('%J', candidate) ? 0 : 1);
-UC_COMPARE
-    then
-        echo 'Catalogue unchanged; running core retained'
-        "$0" nodes
-        exit 0
-    fi
-    was_active=0
-    if /etc/init.d/xray_core running >/dev/null 2>&1 &&
-        [ "$(uci -q get xray_core.general.transparent_proxy_enable || :)" = 1 ]; then was_active=1; fi
-    BACKUP=$(mktemp -d /etc/xray-lab-sync-backup.XXXXXX)
-    cp -p /etc/config/xray_core "$BACKUP/xray_core"
-    if /etc/init.d/xray_core running >/dev/null 2>&1; then /etc/init.d/xray_core stop 8>&- 9>&-; fi
-    cp "$CHECK/xray_core" /etc/config/xray_core.new
-    chmod 600 /etc/config/xray_core.new
-    mv /etc/config/xray_core.new /etc/config/xray_core
-    printf 'Catalogue backup: %s\n' "$BACKUP"
-    if [ "$was_active" = 1 ]; then "$0" start; fi
-    "$0" nodes
+    exec /usr/bin/xray-lab-sync-safe
     ;;
 nodes)
     ucode - <<'UC'
@@ -102,7 +47,18 @@ start)
         /etc/init.d/xray_core stop 8>&- 9>&-
     fi
     for family in -4 -6; do
-        if ip "$family" rule show | grep -Eq '^104:|fwmark (0xfb|251)(/| )|lookup 251'; then echo 'Policy routing table/mark 251 is occupied'; exit 1; fi
+        policy_rules=$(ip "$family" rule show)
+        if [ "$family" = -4 ];then
+            connected=$(ip -4 route show table main proto kernel scope link | awk '{print $1}')
+            policy_rules=$(printf '%s\n' "$policy_rules" | awk -v connected="$connected" '
+                BEGIN {n=split(connected,a,/\n/);for(i=1;i<=n;i++)localnet[a[i]]=1}
+                $1=="103:" && /from all to / && /fwmark (0xfb|251)(\/0xffffffff)? / && /lookup main([[:space:]]|$)/ {
+                    target="";for(i=1;i<NF;i++)if($i=="to")target=$(i+1)
+                    if(localnet[target])next
+                }
+                {print}')
+        fi
+        if printf '%s\n' "$policy_rules" | grep -Eq '^104:|fwmark (0xfb|251)(/| )|lookup 251'; then echo 'Policy routing table/mark 251 is occupied'; exit 1; fi
         routes=$(ip "$family" route show table 251 2>/dev/null || :)
         [ -z "$routes" ] || { echo 'Routing table 251 is occupied'; exit 1; }
     done
@@ -169,12 +125,13 @@ start)
     echo 'Stop: xray-lab stop. Access log: /var/log/xray-lab-access.log'
     ;;
 stop)
-    /etc/init.d/xray_core stop 8>&- 9>&-
-    /etc/init.d/xray_core disable 8>&- 9>&-
+    # Clear desired state before stopping; a cleanup error must not trigger watchdog recovery.
     uci set xray_core.general.transparent_proxy_enable=0
     uci set xray_core.general.fx_start_authorized=0
     uci commit xray_core
-    echo 'Lab stopped. Restore previous PC gateway/DNS settings.'
+    /etc/init.d/xray_core disable 8>&- 9>&-
+    /etc/init.d/xray_core stop 8>&- 9>&-
+    echo 'Proxy stopped; native dnsmasq upstream configuration restored.'
     ;;
 status)
     ubus call service list '{"name":"xray_core"}'

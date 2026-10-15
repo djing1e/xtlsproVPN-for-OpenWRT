@@ -15,7 +15,7 @@ let iface = lan?.l3_device, addr = lan?.['ipv4-address']?.[0];
 if (!lan?.up || !match(iface || '', /^[A-Za-z0-9_.-]{1,15}$/) ||
     !match(addr?.address || '', /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/))
     die('LAN must be up with an IPv4 address');
-let cached = json(fs.readfile('/etc/forkop-xray/subscription.json'));
+let cached = json(fs.readfile(getenv('FX_SUBSCRIPTION_CACHE') || '/etc/forkop-xray/subscription.json'));
 let nodes = cached.nodes || [];
 if (!length(nodes)) die('No cached subscription nodes');
 let previous = {};
@@ -104,7 +104,7 @@ for (let key, node in catalog) {
     uci.set('xray_core',key,'servers');
     for (let option,value in {alias:node.name || vnext.address, subscription_id:node.id,
         protocol:'vless',server:vnext.address,server_port:''+vnext.port,
-        password:vnext.users[0].id,vless_tls:'reality',transport:'tcp',tcp_guise:'none',
+        password:vnext.users[0].id,vless_tls:outbound.streamSettings?.security || 'none',transport:'tcp',tcp_guise:'none',
         vless_flow_reality:vnext.users[0].flow || 'none',
         vless_reality_server_name:outbound.streamSettings?.realitySettings?.serverName || '',
         vless_reality_fingerprint:outbound.streamSettings?.realitySettings?.fingerprint || 'firefox',

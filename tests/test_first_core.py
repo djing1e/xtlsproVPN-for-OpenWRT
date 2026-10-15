@@ -12,7 +12,7 @@ class FirstCore(unittest.TestCase):
      p=tools/name;p.write_text('#!/bin/sh\n'+content);p.chmod(0o755)
     tool('uname','echo aarch64\n')
     tool('uci','case "$*" in *xray_bin*) echo "'+str(bin)+'";; esac\n')
-    tool('curl','while [ "$#" -gt 0 ]; do if [ "$1" = --output ]; then shift; out=$1; fi; shift; done\nprintf zip > "$out"\n')
+    tool('curl','printf "%s\\n" "$*" >> "'+str(d/'curl.log')+'"\nwhile [ "$#" -gt 0 ]; do if [ "$1" = --output ]; then shift; out=$1; fi; shift; done\nprintf zip > "$out"\n')
     tool('unzip',"if [ \"$1\" = -l ]; then echo '"+str(len(candidate.encode()))+" xray'; else cat '"+str(d/'candidate')+"'; fi\n")
     (d/'candidate').write_text(candidate)
     tool('df','printf "Filesystem 1024-blocks Used Available Capacity Mounted\\nfs 1000000 0 1000000 0%% /overlay\\n"\n')
@@ -27,6 +27,6 @@ class FirstCore(unittest.TestCase):
     if invalid:
      self.assertNotEqual(r.returncode,0);self.assertFalse(bin.exists());continue
     self.assertEqual(r.returncode,0,r.stderr);self.assertFalse(bin.exists());self.assertIn('минимальную',r.stdout)
-    r=call('install');self.assertEqual(r.returncode,0,r.stdout+r.stderr);self.assertTrue(bin.exists());self.assertFalse((d/'service-called').exists());self.assertFalse(Path(str(bin)+'.previous').exists())
+    r=call('install');self.assertEqual(r.returncode,0,r.stdout+r.stderr);self.assertTrue(bin.exists());self.assertEqual((d/'curl.log').read_text().count('core.zip '),1);self.assertFalse((d/'service-called').exists());self.assertFalse(Path(str(bin)+'.previous').exists())
     r=call('test');self.assertNotEqual(r.returncode,0);self.assertTrue((d/'service-called').exists())
 if __name__=='__main__':unittest.main()

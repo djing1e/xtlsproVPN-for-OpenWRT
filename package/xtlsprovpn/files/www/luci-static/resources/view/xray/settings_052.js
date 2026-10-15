@@ -1,6 +1,6 @@
 
 'use strict';
-'require view.xray.core_update_versions as coreUpdate';
+'require view.xray.core_update_transfer2 as coreUpdate';
 'require view.xray.dns_panel as dnsSettings';
 'require view.xray.schedule as schedule';
 'require view';

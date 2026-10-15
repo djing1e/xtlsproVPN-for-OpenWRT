@@ -20,7 +20,7 @@ setup_firewall() {
 }
 
 flush_firewall() {
-    /usr/bin/xray-lab-local-policy down || return 1
+    /usr/bin/xray-lab-local-policy down || logger -t xtlsproVPN "Local policy cleanup failed; continuing interception cleanup"
     ip rule del pref 104 fwmark 251 lookup 251
     ip route del local default dev lo table 251
     ip -6 rule del pref 104 fwmark 251 lookup 251
