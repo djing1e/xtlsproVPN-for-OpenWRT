@@ -33,7 +33,8 @@ function validate(p) {
         die('Укажите HTTPS-адрес self-hosted сервера без логина, пароля и параметров запроса');
     if (type(host)!='string' || (host && !match(host,/^[A-Za-z0-9][A-Za-z0-9-]{0,62}$/)))
         die('Имя устройства: до 63 латинских букв, цифр и дефисов');
-    if (type(key)!='string' || (key && !match(key,/^[A-Za-z0-9_-]{16,256}$/)))
+    // musl limits bounded regex repetitions to 255; check length separately.
+    if (type(key)!='string' || (key && (length(key)<16 || length(key)>256 || !match(key,/^[A-Za-z0-9_-]+$/))))
         die('Недопустимый setup key');
     return {management_url:url,hostname:host,setup_key:key};
 }

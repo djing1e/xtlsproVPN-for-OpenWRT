@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -235,6 +236,24 @@ class NetBird(unittest.TestCase):
             self.assertFalse((self.run/'request.json').exists())
         self.assertEqual(self.calls(),[])
 
+    def test_setup_key_length_boundaries(self):
+        for size in (16, 255, 256):
+            self.stage(params=dict(self.params,setup_key='a'*size))
+            self.assertEqual(json.loads((self.run/'request.json').read_text())['setup_key'],'a'*size)
+            (self.run/'request.json').unlink()
+        for size in (1, 15, 257):
+            result=self.call('stage','connect',input=dict(self.params,setup_key='a'*size))
+            self.assertNotEqual(result.returncode,0,result.stdout+result.stderr)
+            self.assertFalse((self.run/'request.json').exists())
+        self.assertEqual(self.calls(),[])
+
+    def test_regex_repetition_bounds_are_musl_compatible(self):
+        source=(FILES/'usr/share/xray/lab/netbird.uc').read_text()
+        for bound in re.finditer(r'\{(\d+)(?:,(\d*))?\}',source):
+            for value in bound.groups():
+                if value:
+                    self.assertLessEqual(int(value),255,'musl RE_DUP_MAX is 255: '+bound.group())
+
     def test_existing_install_is_noop(self):
         self.stage('install')
         r=self.worker('install')
@@ -337,6 +356,7 @@ class NetBird(unittest.TestCase):
             time.sleep(.05)
         self.assertEqual(self.job()['state'],'done',self.job())
         self.assertNotIn(KEY,result.stdout+result.stderr+json.dumps(self.calls()))
+        self.assertEqual((self.r/'key-hash').read_text(),hashlib.sha256(KEY.encode()).hexdigest())
 
     def test_guard_only_recovers_missing_daemon_when_enabled(self):
         mock="""#!/bin/sh
