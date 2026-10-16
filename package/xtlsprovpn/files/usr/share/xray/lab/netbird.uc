@@ -42,6 +42,16 @@ function daemon_status() {
     let r=capture([BIN,'status','--json'],4);
     return r.ok ? parse(r.text) : null;
 }
+function endpoint(url) {return replace(replace(url || '',/\/$/,''),/:443$/,'');}
+function require_setup_key(p) {
+    if (p.setup_key) return;
+    let s=settings();
+    if (s.registered_url && endpoint(s.registered_url)==endpoint(p.management_url)) return;
+    let d=daemon_status();
+    if (d?.management?.connected===true && d?.netbirdIp &&
+        endpoint(d.management.url)==endpoint(p.management_url)) return;
+    die('Для первой регистрации на этом сервере заполните Setup key. Вход через браузер из этой вкладки не поддерживается.');
+}
 function resources() {
     let result={binary_bytes:fs.stat(BIN)?.size || 0,rss_bytes:0,pid:null};
     let pids=split(trim(capture(['pidof','netbird'],2).text),' ');
@@ -68,6 +78,9 @@ function status() {
     let s=settings(), d=daemon_status(), j=job();
     return {installed:!!fs.stat(BIN),enabled:capture([SERVICE,'enabled'],2).ok,
         management_url:s.management_url || '',hostname:s.hostname || '',
+        active_management_url:d?.management?.url || '',
+        registered:!!s.registered_url && endpoint(s.registered_url)==endpoint(s.management_url) ||
+            d?.management?.connected===true && !!d?.netbirdIp,
         connected:d?.management?.connected===true,
         netbird_ip:d?.netbirdIp || '',fqdn:d?.fqdn || '',
         management_connected:d?.management?.connected===true,
@@ -157,6 +170,7 @@ function perform(action,p) {
         return 'NetBird остановлен, автозапуск выключен. Регистрация сохранена.';
     }
     p=validate(p);
+    require_setup_key(p);
     let help=capture([BIN,'up','--help'],5);
     for (let flag in ['--disable-dns','--disable-client-routes','--disable-server-routes','--interface-name','--allow-server-ssh','--setup-key-file','--disable-auto-connect'])
         if (!help.ok || index(help.text,flag)<0) die('Установленная версия NetBird не поддерживает необходимые параметры. Обновите пакет NetBird.');
@@ -181,7 +195,7 @@ function perform(action,p) {
         die('Сервер управления пока не подтвердил подключение. Повторите проверку статуса.');
     let firewall=access_firewall();
     let c=cursor();
-    for (let k,v in {enabled:'1',management_url:p.management_url,hostname:p.hostname,firewall_mode:firewall}) c.set(CONFIG,'main',k,v);
+    for (let k,v in {enabled:'1',management_url:p.management_url,registered_url:p.management_url,hostname:p.hostname,firewall_mode:firewall}) c.set(CONFIG,'main',k,v);
     if (!c.commit(CONFIG)) die('Не удалось сохранить настройки NetBird');
     checked([SERVICE,'enable'],5,'Не удалось включить автозапуск NetBird');
     checked([GUARD,'enable'],5,'Не удалось включить наблюдение NetBird');
@@ -197,6 +211,7 @@ if (mode=='stage') {
     try {
         let p=parse(fs.stdin.read(8193) || '{}');
         p=action=='connect'?validate(p):{};
+        if (action=='connect') require_setup_key(p);
         save(RUN+'/request.json',p);
         save(RUN+'/job.json',{state:'pending',action,updated:time(),message:'Операция NetBird запускается…'});
     } catch(e) {print(sprintf('%J',{error:trim(''+e)}));exit(1);}

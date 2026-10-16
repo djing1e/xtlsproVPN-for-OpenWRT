@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -40,7 +41,7 @@ if name=='netbird':
   print(os.environ['TEST_FLAGS'] if scenario!='old-client' else '--management-url')
  elif args==['status','--json']:
   connected=(r/'connected').exists()
-  print(json.dumps({'management':{'connected':connected},'signal':{'connected':connected},
+  print(json.dumps({'management':{'connected':connected,'url':'https://nb.example.test:443'},'signal':{'connected':connected},
     'netbirdIp':'100.100.0.5/16' if connected else '', 'daemonVersion':'0.66.0',
     'setupKey':'must-not-be-exported','peers':{'details':[{'secret':'not-returned'}]}}))
  elif args==['down']:
@@ -142,6 +143,8 @@ class NetBird(unittest.TestCase):
                      '--disable-auto-connect=false']:
             self.assertIn(flag,up)
         self.assertNotIn(KEY,json.dumps(self.calls()))
+        self.assertIn('--setup-key-file',up)
+        self.assertEqual((self.r/'key-hash').read_text(),hashlib.sha256(KEY.encode()).hexdigest())
         self.assertFalse((self.run/'request.json').exists())
         self.assertFalse((self.run/'setup.key').exists())
         saved=json.loads(self.config.read_text())
@@ -188,6 +191,36 @@ class NetBird(unittest.TestCase):
         self.stage();r=self.worker(scenario='old-client')
         self.assertNotEqual(r.returncode,0)
         self.assertNotIn(['netbird','down'],self.calls())
+
+    def test_first_registration_without_key_refused_before_down(self):
+        p=dict(self.params,setup_key='')
+        r=self.call('stage','connect',input=p)
+        self.assertNotEqual(r.returncode,0)
+        self.assertIn('Setup key',json.loads(r.stdout)['error'])
+        self.assertFalse((self.run/'request.json').exists())
+        self.assertNotIn(['netbird','down'],self.calls())
+
+    def test_registered_reconnect_without_key(self):
+        self.stage();self.assertEqual(self.worker().returncode,0)
+        self.stage('disconnect');self.assertEqual(self.worker('disconnect').returncode,0)
+        self.stage(params=dict(self.params,setup_key=''))
+        r=self.worker()
+        self.assertEqual(r.returncode,0,r.stderr+str(self.job()))
+        calls=[a for a in self.calls() if a[:2]==['netbird','up'] and '--help' not in a]
+        self.assertNotIn('--setup-key-file',calls[-1])
+
+    def test_new_server_without_key_does_not_disconnect_existing_peer(self):
+        self.stage();self.assertEqual(self.worker().returncode,0)
+        before=len(self.calls())
+        r=self.call('stage','connect',input=dict(self.params,setup_key='',management_url='https://other.test'))
+        self.assertNotEqual(r.returncode,0)
+        self.assertNotIn(['netbird','down'],self.calls()[before:])
+
+    def test_existing_connected_peer_can_be_adopted_without_new_key(self):
+        (self.r/'connected').touch()
+        self.stage(params=dict(self.params,setup_key=''))
+        r=self.worker()
+        self.assertEqual(r.returncode,0,r.stderr+str(self.job()))
 
     def test_bad_parameters_do_not_start_commands(self):
         for field,bad in [('management_url','https://nb.test;touch /tmp/pwned'),

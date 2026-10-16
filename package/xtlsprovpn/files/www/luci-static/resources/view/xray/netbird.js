@@ -58,8 +58,17 @@ return baseclass.extend({
                     message.textContent = 'Укажите HTTPS-адрес сервера управления.';
                     return;
                 }
-                submitting = true;
                 const secret = key.value.trim();
+                const endpoint = value => (value || '').replace(/\/$/, '').replace(/:443$/, '');
+                const registeredHere = current.registered &&
+                    endpoint(url.value.trim()) === endpoint(current.management_url || current.active_management_url);
+                if (name === 'connect' && !secret && !registeredHere) {
+                    message.textContent = 'Для первой регистрации на этом сервере заполните Setup key.';
+                    message.style.color = '#c0392b';
+                    key.focus();
+                    return;
+                }
+                submitting = true;
                 key.value = '';
                 refresh(current);
                 message.textContent = 'Запускаем операцию NetBird…';

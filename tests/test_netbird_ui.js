@@ -8,7 +8,7 @@ const source = fs.readFileSync(path.join(__dirname,
 function E(tag, attrs = {}, children = []) {
     return {tag, attrs, children: Array.isArray(children) ? children : [children],
         style: {}, value: attrs.value || '', disabled: false, textContent: '',
-        checkValidity() { return this.value.startsWith('https://'); }};
+        checkValidity() { return this.value.startsWith('https://'); },focus() {this.focused=true;}};
 }
 function all(node) {
     return typeof node === 'object' && node ?
@@ -36,7 +36,11 @@ async function main() {
     const install = nodes.find(n => n.tag === 'button' && n.children[0] === 'Установить NetBird');
     assert.equal(install.disabled, true);
     assert.equal(connect.disabled, false);
-    url.value='https://nb.example.test';key.value='11111111-2222-4333-8444-555555555555';
+    url.value='https://nb.example.test';
+    connect.attrs.click();
+    assert.equal(calls.length,0);
+    assert.equal(key.focused,true);
+    key.value='11111111-2222-4333-8444-555555555555';
     connect.attrs.click();
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(calls[0][0], 'connect');
