@@ -27,13 +27,13 @@ IPv6-перехват не реализован. Точная конфигура
 **1. Чистая установка** — если пакет xtlsproVPN ещё не установлен:
 
 ```sh
-clear; wget -O /tmp/xtls-install.sh https://raw.githubusercontent.com/djing1e/xtlsproVPN-for-OpenWRT/main/install.sh && sh /tmp/xtls-install.sh
+wget -O /tmp/xtls-install.sh https://raw.githubusercontent.com/djing1e/xtlsproVPN-for-OpenWRT/main/install.sh && sh /tmp/xtls-install.sh
 ```
 
 **2. Обновление** — для уже установленного пакета, с сохранением настроек:
 
 ```sh
-clear; wget -O /tmp/xtls-update.sh https://raw.githubusercontent.com/djing1e/xtlsproVPN-for-OpenWRT/main/update.sh && sh /tmp/xtls-update.sh
+wget -O /tmp/xtls-update.sh https://raw.githubusercontent.com/djing1e/xtlsproVPN-for-OpenWRT/main/update.sh && sh /tmp/xtls-update.sh
 ```
 
 Оба установщика проверяют платформу и SHA-256 APK. Чистая установка не удаляет
@@ -66,7 +66,6 @@ APK первого релиза устанавливается как локал
 Xray с ПК и использовать штатный bootstrap:
 
 ```sh
-clear
 xtlspro-core-bootstrap 26.7.28 /tmp/Xray-linux-arm64-v8a.zip /tmp/Xray-linux-arm64-v8a.zip.dgst
 ```
 
@@ -118,7 +117,6 @@ SDK OpenWrt 25.12.5 с проверкой SHA-256. Ручной запуск д�
 Run workflow. Локальная сборка на Linux x86_64 с зависимостями SDK:
 
 ```sh
-clear
 python3 scripts/check-source.py
 bash scripts/build-sdk.sh
 ```
