@@ -22,15 +22,26 @@ IPv6-перехват не реализован. Точная конфигура
 
 ## Установка
 
-Выполните **одну команду по SSH на роутере** (OpenWrt 25.12.5, aarch64):
+Две команды для OpenWrt 25.12.5 / aarch64. Выполняйте по SSH от root.
+
+**1. Чистая установка** — если пакет xtlsproVPN ещё не установлен:
 
 ```sh
-clear; (set -e; apk update; apk add curl ca-bundle coreutils-sha256sum; umask 077; d=$(mktemp -d /tmp/xtls-install.XXXXXX); trap 'rm -rf "$d"' EXIT; curl -fL --connect-timeout 10 --max-time 120 'https://github.com/djing1e/xtlsproVPN-for-OpenWRT/releases/download/v1.0.0/xtlsprovpn-1.0.0-r5.apk' -o "$d/package.apk"; printf '%s  %s\n' 'cdf493ff09f95e010d86f07d68ff40f8f2b38780103ef130c8f4ea1a8c6308e0' "$d/package.apk" | sha256sum -c -; apk add --allow-untrusted "$d/package.apk")
+clear; wget -O /tmp/xtls-install.sh https://raw.githubusercontent.com/djing1e/xtlsproVPN-for-OpenWRT/main/install.sh && sh /tmp/xtls-install.sh
 ```
 
-Роутер сам загрузит APK релиза, проверит SHA-256 и установит пакет с зависимостями.
-Временный APK удаляется после выполнения. Скачивать файл на компьютер и переносить
-его на роутер не требуется. Ядро Xray устанавливается отдельно из интерфейса.
+**2. Обновление** — для уже установленного пакета, с сохранением настроек:
+
+```sh
+clear; wget -O /tmp/xtls-update.sh https://raw.githubusercontent.com/djing1e/xtlsproVPN-for-OpenWRT/main/update.sh && sh /tmp/xtls-update.sh
+```
+
+Оба установщика проверяют платформу и SHA-256 APK. Чистая установка не удаляет
+старую установку, а предлагает ссылку обновления. Обновление использует штатный
+механизм APK без удаления конфигурации и ядра; при актуальной версии завершается
+без переустановки, понижение версии запрещено. Ядро Xray управляется отдельно
+из интерфейса. При фактическом обновлении пакета возможен краткий перезапуск
+прокси штатным обработчиком APK.
 
 APK первого релиза устанавливается как локальный пакет с `--allow-untrusted`.
 Постоянный ключ доверенного репозитория пакетов пока не распространяется.

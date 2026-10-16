@@ -12,8 +12,8 @@ permissions:
   contents: read
 jobs:
   build:
-    # The first release promotes the existing hardware-tested artifact.
-    if: github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'Release v1.0.0')
+    # Release promotion and external installer-only changes reuse the tested APK.
+    if: github.event_name != 'push' || (!startsWith(github.event.head_commit.message, 'Release v1.0.0') && !startsWith(github.event.head_commit.message, 'installer:'))
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:

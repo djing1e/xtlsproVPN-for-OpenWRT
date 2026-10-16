@@ -1,0 +1,46 @@
+#!/bin/sh
+# Published stable release; bump version, URL and hash together.
+set -eu
+MODE=update
+VERSION='1.0.0-r5'
+SHA256='cdf493ff09f95e010d86f07d68ff40f8f2b38780103ef130c8f4ea1a8c6308e0'
+URL="https://github.com/djing1e/xtlsproVPN-for-OpenWRT/releases/download/v1.0.0/xtlsprovpn-$VERSION.apk"
+
+fail() { echo "xtlsproVPN: $*" >&2; exit 1; }
+[ "$#" -eq 0 ] || fail 'Параметры не поддерживаются.'
+[ "$(id -u)" = 0 ] || fail 'Запустите от root.'
+[ -f /etc/openwrt_release ] || fail 'Нужен OpenWrt.'
+. /etc/openwrt_release
+[ "${DISTRIB_RELEASE:-}" = '25.12.5' ] || fail 'Этот выпуск проверен для OpenWrt 25.12.5.'
+[ "$(uname -m)" = aarch64 ] || fail 'Этот выпуск предназначен для aarch64.'
+command -v apk >/dev/null 2>&1 || fail 'Не найден пакетный менеджер apk.'
+
+installed=0
+apk info -e xtlsprovpn >/dev/null 2>&1 && installed=1
+case "$MODE:$installed" in
+    install:1) fail 'Пакет уже установлен. Используйте ссылку обновления.' ;;
+    update:0) fail 'Пакет не установлен. Используйте ссылку чистой установки.' ;;
+esac
+if [ "$MODE" = update ]; then
+    if apk info -e "xtlsprovpn>$VERSION" >/dev/null 2>&1; then
+        fail 'Установлена более новая версия; понижение не выполняется.'
+    fi
+    if apk info -e "xtlsprovpn=$VERSION" >/dev/null 2>&1; then
+        echo "xtlsproVPN $VERSION уже установлен. Обновление не требуется."
+        exit 0
+    fi
+fi
+
+# No removal, purge, config reset or direct service restart.
+apk update
+apk add curl ca-bundle coreutils-sha256sum
+umask 077
+workdir=$(mktemp -d /tmp/xtls-install.XXXXXX)
+trap 'rm -rf "$workdir"' EXIT
+trap 'exit 1' HUP INT TERM
+package="$workdir/xtlsprovpn-$VERSION.apk"
+curl -fL --connect-timeout 10 --max-time 120 "$URL" -o "$package"
+printf '%s  %s\n' "$SHA256" "$package" | sha256sum -c -
+apk add --allow-untrusted "$package"
+echo "xtlsproVPN $VERSION: установка пакета завершена."
+echo 'Откройте Services → xtlsproVPN в LuCI. Ядро Xray управляется отдельно.'

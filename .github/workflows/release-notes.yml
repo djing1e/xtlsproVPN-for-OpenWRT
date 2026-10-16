@@ -3,6 +3,9 @@ on:
   push:
     branches: ['main']
     paths:
+      - 'install.sh'
+      - 'update.sh'
+      - 'tests/test_install_links.py'
       - 'docs/releases/v1.0.0.md'
       - '.github/workflows/release-notes.yml'
   workflow_dispatch:
@@ -20,6 +23,11 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      - name: Check install and update entry points
+        run: |
+          sh -n install.sh
+          sh -n update.sh
+          python3 -m unittest discover -s tests -p 'test_install_links.py'
       - name: Update description of the existing release
         env:
           GH_TOKEN: ${{ github.token }}
