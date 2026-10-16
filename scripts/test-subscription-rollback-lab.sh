@@ -5,9 +5,13 @@ umask 077
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
 [ "$(id -u)" = 0 ] || exit 1
-[ "$(uci -q get network.lan.ipaddr)" = 172.16.100.95 ] || {
-    echo 'This test is restricted to LAB 172.16.100.95.' >&2; exit 1;
-}
+# UCI may store IPv4 with a CIDR suffix or as a list; guard on the live LAN.
+if ! ip -4 addr show dev br-lan | awk '
+    $1=="inet" && $2=="172.16.100.95/23" {found=1}
+    END {exit !found}';then
+    echo 'This test requires live br-lan address 172.16.100.95/23.' >&2
+    exit 1
+fi
 RUN=/var/run/xray-lab-control
 CORE=/etc/config/xray_core
 CONTROL=/usr/share/xray/lab/control.uc
