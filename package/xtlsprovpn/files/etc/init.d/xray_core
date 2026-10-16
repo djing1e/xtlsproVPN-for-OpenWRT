@@ -36,7 +36,6 @@ flush_interception_chains() {
 
 flush_firewall() {
     local failed=0
-    /usr/bin/xray-lab-redirects down || failed=1
     /usr/bin/xray-lab-local-policy down || {
         logger -t xtlsproVPN "Local policy cleanup failed; continuing interception cleanup"
         failed=1

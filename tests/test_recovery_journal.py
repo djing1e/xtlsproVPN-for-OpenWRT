@@ -160,7 +160,7 @@ start_service
 
     def test_early_boot_recovers_with_proxy_autostart_disabled(self):
         self.command('prepare');self.mutate()
-        source=(ROOT/'etc/init.d/xray_lab_recovery').read_text().replace('/usr/bin/xray-lab-subscription-journal',str(self.helper))
+        source=(ROOT/'etc/init.d/xray_lab_recovery').read_text().replace('/usr/bin/xray-lab-subscription-journal',str(self.helper)).replace('/etc/forkop-xray/subscription.json',str(self.state/FILES[0])).replace('/usr/bin/xray-lab-redirects', '/bin/true')
         init=self.root/'early-init';init.write_text(source);self.helper.chmod(0o755)
         result=subprocess.run(['sh','-c','. "$1"; start','_',str(init)],env=self.env,capture_output=True,text=True,timeout=5)
         self.assertEqual(result.returncode,0,result.stderr);self.assert_old()

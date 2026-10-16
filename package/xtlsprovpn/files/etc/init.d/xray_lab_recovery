@@ -1,7 +1,12 @@
 #!/bin/sh /etc/rc.common
-# Recover catalogue transactions even when the user has disabled proxy autostart.
+# Repair stored transactions and keep one-arm clients using their configured gateway.
 START=98
 STOP=16
 start() {
-    /usr/bin/xray-lab-subscription-journal recover
+    /usr/bin/xray-lab-subscription-journal recover || return 1
+    [ -s /etc/forkop-xray/subscription.json ] || return 0
+    /usr/bin/xray-lab-redirects up
+}
+stop() {
+    /usr/bin/xray-lab-redirects down
 }

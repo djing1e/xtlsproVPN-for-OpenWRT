@@ -58,7 +58,7 @@ class StopSafety(unittest.TestCase):
 
     def test_init_cleanup_attempts_dns_and_firewall_independently(self):
         source = (ROOT / 'etc/init.d/xray_core').read_text()
-        for scenario in ('success', 'dnsmasq', 'firewall', 'policy', 'redirects', 'all'):
+        for scenario in ('success', 'dnsmasq', 'firewall', 'policy', 'all'):
             with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as temp:
                 d = Path(temp)
                 tools, env = self.fixture(d, scenario)
@@ -80,6 +80,7 @@ class StopSafety(unittest.TestCase):
                 result = subprocess.run(['sh', '-c', '. "$1"; flush_when_disable', '_', str(script)],
                                         env=env, capture_output=True, text=True, timeout=5)
                 events = (d / 'events').read_text()
+                self.assertNotIn('redirects down', events) # proxy stop must not teach client bypass routes
                 self.assertIn('dnsmasq restart\n', events)
                 self.assertIn('firewall restart\n', events)
                 self.assertFalse((instance / 'xray.conf').exists())
