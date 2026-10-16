@@ -51,6 +51,8 @@ if (action == 'start') {
             ', HTTP=' + download[2] :
             'Команда завершилась с кодом ' + rc;
 
+    if (rc != 0 && index(text,'allowInsecure')>=0)
+        data.error='Конфигурация отклонена: устаревший TLS allowInsecure. Рабочие настройки сохранены.';
     if (rc == 0) data.last_success = data.finished;
     data.pid = null;
 } else {

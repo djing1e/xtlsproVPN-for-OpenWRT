@@ -1,0 +1,204 @@
+#!/bin/sh
+set -eu
+umask 077
+RUN=/var/run/xray-lab-control
+STATE=/etc/forkop-xray
+CORE=/etc/config/xray_core
+INIT=/etc/init.d/xray_core
+BIN=/usr/libexec/forkop-xray/xray
+LIB=/usr/share/xray
+JOURNAL=/usr/bin/xray-lab-subscription-journal
+mkdir -p "$RUN"
+if [ "${FX_LOCK_HELD:-0}" != 1 ];then
+    exec 8>"$RUN/action.lock"
+    flock -n 8 || { echo 'Another operation is running';exit 1; }
+    export FX_LOCK_HELD=1
+fi
+if [ -f "$RUN/subscription-recovery" ];then
+    echo 'A previous subscription rollback is unresolved. Inspect subscription-recovery before updating again.' >&2
+    exit 1
+fi
+"$JOURNAL" check
+read -r process_stat < /proc/self/stat
+FX_SYNC_OWNER="$(cat /proc/sys/kernel/random/boot_id):$(printf '%s\n' "$process_stat" | awk '{print $1 ":" $22}')"
+export FX_SYNC_OWNER
+WORK=$(mktemp -d /tmp/xtls-sync-safe.XXXXXX)
+APPLIED=0
+COMMITTED=0
+KEEP_WORK=0
+PROBE_PID=
+WAS_RUNNING=0
+WAS_ENABLED=$(uci -q get xray_core.general.transparent_proxy_enable || :)
+"$INIT" running >/dev/null 2>&1 && WAS_RUNNING=1
+mkdir -p "$WORK/staged" "$WORK/fetch" "$WORK/previous" "$WORK/config" "$RUN"
+cp -p "$CORE" "$WORK/previous-core"
+FILES='subscription.json previous.json last-success-update device-hwid device-hwid-short'
+for file in $FILES;do
+    if [ -f "$STATE/$file" ];then
+        cp -p "$STATE/$file" "$WORK/previous/$file"
+        cp -p "$STATE/$file" "$WORK/staged/$file"
+    fi
+done
+[ ! -f "$STATE/rulesets.json" ] || cp -p "$STATE/rulesets.json" "$WORK/staged/rulesets.json"
+stop_probe() {
+    if [ -n "$PROBE_PID" ];then
+        kill "$PROBE_PID" 2>/dev/null || :
+        wait "$PROBE_PID" 2>/dev/null || :
+        PROBE_PID=
+    fi
+}
+healthy() {
+    ucode "$LIB/lab/control.uc" health > "$WORK/health.json" || return 1
+    [ "$(jsonfilter -i "$WORK/health.json" -e '@.proxy_ok')" = true ] || return 1
+    if [ "$WAS_ENABLED" = 1 ];then
+        nslookup -type=A -timeout=3 -retry=1 openwrt.org 127.0.0.1 > "$WORK/live-dns" 2>&1 || return 1
+        grep -q '^Name:' "$WORK/live-dns" || return 1
+        ucode "$LIB/lab/control.uc" status > "$WORK/status.json" || return 1
+        [ "$(jsonfilter -i "$WORK/status.json" -e '@.interception.active')" = true ] || return 1
+    fi
+}
+finish() {
+    rc=$?
+    trap - EXIT HUP INT TERM
+    # Recovery must continue collecting failures even when a restore command fails.
+    set +e
+    stop_probe
+    if [ "$rc" != 0 ];then
+        {
+            date -u
+            printf 'Subscription apply failed; code=%s; applied=%s\n' "$rc" "$APPLIED"
+            tail -c 8192 "$WORK/probe-error.log" 2>/dev/null || :
+            tail -c 4096 "$WORK/probe-core.log" 2>/dev/null || :
+        } > "$RUN/last-apply-failure.log"
+        if [ "$APPLIED" = 1 ] && [ "$COMMITTED" = 0 ];then
+            restore_failed=0
+            for file in $FILES;do
+                if [ -f "$WORK/previous/$file" ];then
+                    if cp -p "$WORK/previous/$file" "$STATE/$file.sync-new";then
+                        mv "$STATE/$file.sync-new" "$STATE/$file" || restore_failed=1
+                    else
+                        restore_failed=1
+                    fi
+                else
+                    rm -f "$STATE/$file" || restore_failed=1
+                fi
+                rm -f "$STATE/$file.sync-new"
+            done
+            if cp -p "$WORK/previous-core" "$CORE.rollback";then
+                mv "$CORE.rollback" "$CORE" || restore_failed=1
+            else
+                restore_failed=1
+            fi
+            restored=0
+            if [ "$restore_failed" = 0 ];then
+                if [ "$WAS_RUNNING" = 1 ];then
+                    if "$INIT" restart 7>&- 8>&- 9>&-;then
+                        for attempt in 1 2 3 4 5;do sleep 2; if healthy;then restored=1;break;fi;done
+                    fi
+                else
+                    restored=1
+                fi
+            fi
+            if [ "$restored" = 1 ];then
+                if [ "$WAS_RUNNING" = 1 ];then
+                    echo 'Previous configuration restored; HTTPS and DNS verified.'
+                else
+                    echo 'Previous configuration restored; proxy remains stopped.'
+                fi
+                "$JOURNAL" resolved || KEEP_WORK=1
+                echo 'Rollback completed.' >> "$RUN/last-apply-failure.log"
+            else
+                KEEP_WORK=1
+                printf '%s\n' "$WORK" > "$RUN/subscription-recovery"
+                echo "Recovery snapshot retained in RAM: $WORK" | tee -a "$RUN/last-apply-failure.log"
+                echo 'Rollback failed or connectivity is unconfirmed; working recovery files were retained.' >&2
+            fi
+        fi
+        # One bounded incident record survives a reboot; no continuous flash logging.
+        cp "$RUN/last-apply-failure.log" /etc/xtlsprovpn-last-apply-failure.log || :
+        chmod 600 /etc/xtlsprovpn-last-apply-failure.log || :
+    fi
+    rm -f "$CORE.sync-new"
+    if [ "$KEEP_WORK" != 1 ];then rm -rf "$WORK";fi
+    exit "$rc"
+}
+trap finish EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+echo 'Downloading subscription into a private staging directory; live services retained...'
+FX_STATE_DIR="$WORK/staged" FX_RUN_DIR="$WORK/fetch" FX_NO_RELOAD=1 FX_FALLBACK_SOCKS=127.0.0.1:1080 forkop-xray update
+: > "$WORK/config/xray_core"
+FX_SUBSCRIPTION_CACHE="$WORK/staged/subscription.json" ucode "$LIB/lab_prepare.uc" "$WORK/config"
+XRAY_UCI_CONFIG_DIR="$WORK/config" ucode "$LIB/gen_config.uc" > "$WORK/config.json"
+XRAY_LOCATION_ASSET="$LIB" GOMEMLIMIT=64MiB GOMAXPROCS=2 "$BIN" run -test -c "$WORK/config.json"
+printf 'table inet xray_lab_check {\n' > "$WORK/firewall.nft"
+XRAY_UCI_CONFIG_DIR="$WORK/config" utpl "$LIB/firewall_include.ut" >> "$WORK/firewall.nft"
+printf '}\n' >> "$WORK/firewall.nft"
+nft -c -f "$WORK/firewall.nft"
+
+unchanged=0
+ucode - "$WORK/config" <<'UC' && unchanged=1 || :
+let cursor=require('uci').cursor;
+function norm(dir){let c=cursor(dir);c.load('xray_core');let d=c.get_all('xray_core') || {};return map(sort(keys(d)),k=>[k,map(sort(filter(keys(d[k]),o=>substr(o,0,1)!='.' && !(k=='general' && o=='transparent_proxy_enable'))),o=>[o,d[k][o]])]);}
+exit(sprintf('%J',norm(null))==sprintf('%J',norm(ARGV[0]))?0:1);
+UC
+if [ "$unchanged" != 1 ];then
+    available=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
+    [ "${available:-0}" -ge 98304 ] || { echo 'Not enough RAM for isolated candidate testing; live state retained.';exit 1; }
+    echo 'Testing changed nodes, selected proxy and DNS in a separate process...'
+    ucode "$LIB/lab/sync_probe.uc" "$WORK/config.json" /var/etc/xray/config.json "$WORK/probe.json" "$WORK/ports" "$WORK/probe-error.log"
+    (
+        echo 1000 > /proc/self/oom_score_adj 2>/dev/null || :
+        export XRAY_LOCATION_ASSET="$LIB" GOMEMLIMIT=64MiB GOMAXPROCS=2
+        exec "$BIN" run -c "$WORK/probe.json"
+    ) > "$WORK/probe-core.log" 2>&1 7>&- 8>&- 9>&- &
+    PROBE_PID=$!
+    sleep 2
+    kill -0 "$PROBE_PID" 2>/dev/null || { echo 'Candidate process failed. Live state retained.';exit 1; }
+    for port in $(cat "$WORK/ports") 11980;do
+        ok=0
+        for attempt in 1 2 3;do
+            code=$(curl --silent --fail --connect-timeout 4 --max-time 10 --proto '=https' --noproxy '' --proxy "socks5h://127.0.0.1:$port" --output /dev/null --write-out '%{http_code}' https://cp.cloudflare.com/generate_204) || code=000
+            if [ "$code" = 204 ];then ok=1;break;fi
+            sleep 1
+        done
+        [ "$ok" = 1 ] || { echo "Candidate HTTPS failed on local probe $port. Live state retained.";exit 1; }
+    done
+    nslookup -type=A -timeout=3 -retry=1 openwrt.org 127.0.0.1:11981 > "$WORK/probe-dns" 2>&1
+    grep -q '^Name:' "$WORK/probe-dns" || { echo 'Candidate DNS failed. Live state retained.';exit 1; }
+    stop_probe
+    if [ "$WAS_RUNNING" = 1 ];then
+        healthy || { echo 'Existing connection is not healthy; applying changes is cancelled.';exit 1; }
+    fi
+    ucode - "$WORK/config" "$WAS_ENABLED" <<'UC'
+let c=require('uci').cursor(ARGV[0]);c.load('xray_core');c.set('xray_core','general','transparent_proxy_enable',ARGV[1]=='1'?'1':'0');if(!c.commit('xray_core'))die('Cannot stage desired proxy state');
+UC
+    "$JOURNAL" prepare "$WORK"
+    APPLIED=1
+    cp "$WORK/config/xray_core" "$CORE.sync-new"
+    chmod 600 "$CORE.sync-new"
+    mv "$CORE.sync-new" "$CORE"
+    if [ "$WAS_RUNNING" = 1 ];then
+        "$INIT" restart 7>&- 8>&- 9>&-
+        ok=0
+        for attempt in 1 2 3 4 5;do sleep 2;if healthy;then ok=1;break;fi;done
+        [ "$ok" = 1 ] || { echo 'Live validation failed; restoring the previous configuration.';exit 1; }
+    fi
+fi
+# Publish catalogue only after the candidate has been accepted and, if running, verified.
+[ "$APPLIED" = 1 ] || "$JOURNAL" prepare "$WORK"
+APPLIED=1
+for file in $FILES;do
+    [ -f "$WORK/staged/$file" ] || continue
+    if [ -f "$STATE/$file" ] && [ "$(sha256sum "$STATE/$file" | awk '{print $1}')" = "$(sha256sum "$WORK/staged/$file" | awk '{print $1}')" ];then continue;fi
+    cp -p "$WORK/staged/$file" "$STATE/$file.sync-new"
+    mv "$STATE/$file.sync-new" "$STATE/$file"
+done
+# Once committing begins, a write error may leave a durable commit decision.
+# Keep the verified candidate running; recovery will decide from the journal.
+COMMITTED=1
+"$JOURNAL" commit || { echo 'Commit could not be confirmed; persistent recovery journal retained.' >&2; exit 1; }
+"$JOURNAL" check || :
+if [ "$unchanged" = 1 ];then echo 'Catalogue unchanged; running core retained';else echo 'Subscription applied; candidate HTTPS and DNS verified.';fi

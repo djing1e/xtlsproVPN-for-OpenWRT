@@ -11,6 +11,9 @@ WORK=
 ACTIVATED=0
 PHASE=starting
 AVAILABLE=
+CORE_DOWNLOAD_TOTAL=0
+DOWNLOAD_PID=
+CACHE="$RUN/core-candidate"
 export FX_CORE_CHANNEL=stable
 export FX_CORE_ALLOW_PRERELEASE="${FX_CORE_ALLOW_PRERELEASE:-$(uci -q get xray_lab_core.main.include_prerelease || :)}"
 if [ "$FX_CORE_ALLOW_PRERELEASE" = 1 ]; then
@@ -96,6 +99,10 @@ restore_previous() {
 finish() {
     rc=$?
     trap - EXIT HUP INT TERM
+    if [ -n "$DOWNLOAD_PID" ]; then
+        kill "$DOWNLOAD_PID" 2>/dev/null || :
+        wait "$DOWNLOAD_PID" 2>/dev/null || :
+    fi
 
     if [ "$rc" != 0 ]; then
         if [ "$ACTIVATED" = 1 ]; then
@@ -110,8 +117,14 @@ finish() {
                     "$INSTALLED" "$AVAILABLE" || :
             fi
         else
-            ucode "$HELPER" record "$ACTION" error \
-                "Операция остановлена на этапе: $PHASE. Ядро не заменено." \
+            message="Операция остановлена на этапе: $PHASE. Ядро не заменено."
+            if [ "$FIRST_INSTALL" = 1 ]; then
+                message="$message Настройки DNS и маршрутов не менялись."
+            fi
+            if [ -f "$CACHE/xray" ]; then
+                message="$message В RAM есть кандидат; перед использованием он будет проверен повторно."
+            fi
+            ucode "$HELPER" record "$ACTION" error "$message" \
                 "$INSTALLED" "$AVAILABLE" || :
         fi
     fi
@@ -129,36 +142,81 @@ ports() {
     ucode "$HELPER" ports
 }
 
-fetch() {
-    url=$1
-    output=$2
-    limit=$3
-    rm -f "$output"
+download_once() {
+    output=$1; via=$2; shift 2
+    if [ "$output" != "$WORK/core.zip" ]; then
+        curl "$@"
+        return $?
+    fi
+    started=$(date +%s)
+    curl "$@" &
+    transfer_pid=$!
+    DOWNLOAD_PID=$transfer_pid
+    while kill -0 "$transfer_pid" 2>/dev/null; do
+        received=0
+        [ ! -f "$output" ] || received=$(wc -c < "$output")
+        ucode "$HELPER" progress "$received" "$CORE_DOWNLOAD_TOTAL" "$started" "$via" "$AVAILABLE" || :
+        sleep 1
+    done
+    transfer_rc=0
+    wait "$transfer_pid" || transfer_rc=$?
+    DOWNLOAD_PID=
+    received=0
+    [ ! -f "$output" ] || received=$(wc -c < "$output")
+    ucode "$HELPER" progress "$received" "$CORE_DOWNLOAD_TOTAL" "$started" "$via" "$AVAILABLE" || :
+    return "$transfer_rc"
+}
 
+fetch() {
+    url=$1; output=$2; limit=$3
+    rm -f "$output"
+    direct_timeout=180
+    if [ "$FIRST_INSTALL" = 1 ] && [ "$output" = "$WORK/core.zip" ]; then
+        direct_timeout=900
+    fi
     echo 'Загрузка напрямую...'
-    if curl -4 --http1.1 --silent --show-error --fail --location \
+    if download_once "$output" direct -4 --http1.1 --silent --show-error --fail --location \
         --proto '=https' --proto-redir '=https' \
-        --noproxy '*' --connect-timeout 5 --max-time 120 --speed-limit 1024 --speed-time 20 \
-        --max-filesize "$limit" \
-        --output "$output" "$url"; then
+        --noproxy '*' --connect-timeout 5 --max-time "$direct_timeout" --speed-limit 1024 --speed-time 20 \
+        --max-filesize "$limit" --output "$output" "$url"; then
         return 0
     fi
-
     for port in $(ports); do
         echo "Повтор через тоннель, локальный порт $port..."
         rm -f "$output"
-        if curl --silent --show-error --fail --location \
+        if download_once "$output" proxy --silent --show-error --fail --location \
             --proto '=https' --proto-redir '=https' \
             --noproxy '' --proxy "socks5h://127.0.0.1:$port" \
-            --connect-timeout 5 --max-time 90 \
-            --max-filesize "$limit" \
-            --output "$output" "$url"; then
+            --connect-timeout 5 --max-time 180 --speed-limit 1024 --speed-time 20 \
+            --max-filesize "$limit" --output "$output" "$url"; then
             return 0
         fi
     done
-
     rm -f "$output"
     return 1
+}
+
+cached_candidate() {
+    [ -f "$CACHE/xray" ] && [ ! -L "$CACHE/xray" ] || return 1
+    [ "$(cat "$CACHE/version" 2>/dev/null)" = "$AVAILABLE" ] || { rm -rf "$CACHE"; return 1; }
+    expires=$(cat "$CACHE/expires" 2>/dev/null || :)
+    case "$expires" in ''|*[!0-9]*) rm -rf "$CACHE"; return 1;; esac
+    [ "$expires" -gt "$(date +%s)" ] || { rm -rf "$CACHE"; return 1; }
+    expected=$(cat "$CACHE/sha256" 2>/dev/null || :)
+    actual=$(sha256sum "$CACHE/xray" | awk '{print $1}')
+    [ "$expected" = "$actual" ] || { rm -rf "$CACHE"; return 1; }
+    mv "$CACHE/xray" "$WORK/xray"
+    rm -rf "$CACHE"
+    record cached "Используем проверенное ядро $AVAILABLE из RAM; повторного скачивания нет."
+}
+
+cache_candidate() {
+    rm -rf "$CACHE"
+    mkdir -m 700 "$CACHE"
+    sha256sum "$WORK/xray" | awk '{print $1}' > "$CACHE/sha256"
+    printf '%s\n' "$AVAILABLE" > "$CACHE/version"
+    printf '%s\n' "$(( $(date +%s) + 1800 ))" > "$CACHE/expires"
+    mv "$WORK/xray" "$CACHE/xray"
 }
 
 pinned_health() {
@@ -277,13 +335,14 @@ fi
 if [ "$ACTION" = rollback ]; then
     test -x "$BIN.previous"
     cp "$BIN.previous" "$WORK/xray"
-else
+elif ! cached_candidate; then
     available_kb=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
     [ "$available_kb" -ge 102400 ] || {
         echo 'Для подготовки обновления требуется хотя бы 100 МиБ доступной RAM.'
         exit 1
     }
 
+    CORE_DOWNLOAD_TOTAL=$(ucode "$HELPER" asset-size "$WORK/selected.json")
     record download "Скачиваем Xray $AVAILABLE..."
     url="https://github.com/XTLS/Xray-core/releases/download/v$AVAILABLE/Xray-linux-arm64-v8a.zip"
     fetch "$url" "$WORK/core.zip" 67108864
@@ -323,10 +382,11 @@ fi
 
 
 if [ "$ACTION" = test ]; then
+    cache_candidate
     if [ "$FIRST_INSTALL" = 1 ]; then
-        record compatible "Xray $candidate_version запускается и принимает минимальную конфигурацию. Подписка и LAN ещё не проверены."
+        record compatible "Xray $candidate_version запускается и принимает минимальную конфигурацию. Подписка и LAN ещё не проверены. Кандидат сохранён в RAM на 30 минут."
     else
-        record compatible "Xray $candidate_version принимает текущую конфигурацию. Ядро не заменено."
+        record compatible "Xray $candidate_version принимает текущую конфигурацию. Ядро не заменено. Кандидат сохранён в RAM на 30 минут."
     fi
     exit 0
 fi

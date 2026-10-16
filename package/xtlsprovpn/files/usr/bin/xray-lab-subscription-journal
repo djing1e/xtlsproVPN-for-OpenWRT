@@ -1,0 +1,106 @@
+#!/bin/sh
+# A single durable before-image; incomplete preparation never changes live files.
+set -eu
+umask 077
+STATE=/etc/forkop-xray
+CORE=/etc/config/xray_core
+RUN=/var/run/xray-lab-control
+JOURNAL="$STATE/.subscription-transaction"
+FILES='subscription.json previous.json last-success-update device-hwid device-hwid-short'
+mkdir -p "$STATE" "$RUN"
+exec 6>"$RUN/subscription-journal.lock"
+flock 6
+retire() {
+    # Atomic retirement prevents a torn recursive deletion from looking pending.
+    sync
+    mv "$JOURNAL" "$JOURNAL.done"
+    sync
+    rm -rf "$JOURNAL.done"
+}
+verify() {
+    [ -f "$JOURNAL/previous-core" ] && [ ! -L "$JOURNAL/previous-core" ] || return 1
+    for file in $FILES; do
+        if [ -f "$JOURNAL/$file" ] && [ ! -L "$JOURNAL/$file" ]; then
+            [ ! -e "$JOURNAL/absent-$file" ] || return 1
+        else
+            [ ! -e "$JOURNAL/$file" ] && [ -f "$JOURNAL/absent-$file" ] || return 1
+        fi
+    done
+    actual=$(cd "$JOURNAL" && for file in previous-core $FILES; do
+        if [ -f "$file" ]; then sha256sum "$file" || exit 1
+        else sha256sum "absent-$file" || exit 1; fi
+    done) || return 1
+    [ "$actual" = "$(cat "$JOURNAL/checksums")" ]
+}
+case "${1:-}" in
+prepare)
+    [ ! -e "$JOURNAL" ] || { echo 'Unresolved subscription transaction; restart the service to recover first.' >&2; exit 1; }
+    rm -rf "$JOURNAL.new" "$JOURNAL.done"
+    mkdir "$JOURNAL.new"
+    cp -p "$2/previous-core" "$JOURNAL.new/previous-core"
+    for file in $FILES; do
+        if [ -f "$2/previous/$file" ]; then
+            cp -p "$2/previous/$file" "$JOURNAL.new/$file"
+        else
+            : > "$JOURNAL.new/absent-$file"
+        fi
+    done
+    printf '%s\n' "${FX_SYNC_OWNER:?Missing transaction owner}" > "$JOURNAL.new/owner"
+    (cd "$JOURNAL.new" && for file in previous-core $FILES; do
+        if [ -f "$file" ]; then sha256sum "$file" || exit 1; else sha256sum "absent-$file" || exit 1; fi
+    done) > "$JOURNAL.new/checksums"
+    sync
+    mv "$JOURNAL.new" "$JOURNAL"
+    sync
+    ;;
+check)
+    [ ! -e "$JOURNAL" ] && exit 0
+    if [ -f "$JOURNAL/committed" ]; then retire; else
+        echo 'Pending subscription transaction; restart the service to restore its previous configuration.' >&2
+        exit 1
+    fi
+    ;;
+commit)
+    [ -d "$JOURNAL" ] || exit 1
+    # Candidate files must reach storage before the commit decision.
+    sync
+    : > "$JOURNAL/committed.new"
+    mv "$JOURNAL/committed.new" "$JOURNAL/committed"
+    sync
+    ;;
+resolved)
+    [ ! -e "$JOURNAL" ] || retire
+    ;;
+recover)
+    [ -d "$JOURNAL" ] || exit 0
+    # Never restore under another live updater. Check boot ID and start time against PID reuse.
+    owner=$(cat "$JOURNAL/owner" 2>/dev/null || :)
+    boot=$(cat /proc/sys/kernel/random/boot_id)
+    pid=$(printf '%s' "$owner" | cut -d : -f 2)
+    case "$pid" in ''|*[!0-9]*) started=;;
+        *) started=$(awk '{print $22}' "/proc/$pid/stat" 2>/dev/null || :);;
+    esac
+    if [ -n "$started" ] && [ "$owner" = "$boot:$pid:$started" ]; then
+        [ "${FX_SYNC_OWNER:-}" = "$owner" ] && exit 0
+        echo 'Subscription update is still active; startup deferred.' >&2
+        exit 1
+    fi
+    if [ -f "$JOURNAL/committed" ]; then retire; exit 0; fi
+    verify || { echo 'Subscription backup is damaged; automatic startup refused. Backup retained.' >&2; exit 1; }
+    for file in $FILES; do
+        if [ -f "$JOURNAL/$file" ]; then
+            cp -p "$JOURNAL/$file" "$STATE/$file.sync-new"
+            mv "$STATE/$file.sync-new" "$STATE/$file"
+        else
+            rm -f "$STATE/$file"
+        fi
+    done
+    cp -p "$JOURNAL/previous-core" "$CORE.rollback"
+    mv "$CORE.rollback" "$CORE"
+    sync
+    retire
+    rm -f "$RUN/subscription-recovery"
+    logger -t xtlsproVPN 'Restored previous subscription configuration after an interrupted apply'
+    ;;
+*) echo 'Usage: xray-lab-subscription-journal prepare WORK|check|commit|resolved|recover' >&2; exit 2;;
+esac

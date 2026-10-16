@@ -49,7 +49,9 @@ return view.extend({
                         ]);
                     })].filter(child=>child!=null));
             });
+            const updateErrors=Object.entries(s.updates || {}).filter(([kind,value])=>['subscription','routing'].includes(kind) && value?.state==='error');
             body.replaceChildren(
+                updateErrors.length?E('div',{'class':'alert-message warning',role:'alert'},updateErrors.map(([kind,value])=>E('p',{},(kind==='subscription'?'Подписка':'Маршрутизация')+': последнее обновление не применено. '+(value.error || 'Откройте мониторинг обновлений.')+' Ниже — состояние работающей конфигурации.'))):E('span'),
                 E('div',{'class':'fx-diag-toolbar'},[
                     lab.button('Запустить диагностику','diagnose','',busy),
                     lab.button('Перезапустить прокси','restart','',busy),

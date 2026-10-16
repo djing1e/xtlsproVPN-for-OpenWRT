@@ -27,7 +27,7 @@
     "order": 1,
     "action": {
       "type": "view",
-      "path": "xray/settings_052"
+      "path": "xray/settings_transfer2"
     }
   },
   "admin/services/forkop-xray/diagnostics": {
@@ -35,7 +35,7 @@
     "order": 2,
     "action": {
       "type": "view",
-      "path": "xray/diagnostics_052"
+      "path": "xray/diagnostics_updates2"
     }
   },
   "admin/services/forkop-xray/monitoring": {

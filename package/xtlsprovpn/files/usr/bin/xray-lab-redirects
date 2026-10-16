@@ -1,0 +1,54 @@
+#!/bin/sh
+# One-arm forwarding must not teach clients to bypass this gateway.
+set -eu
+umask 077
+RUN=/var/run/xray-lab-control
+SYS=/proc/sys/net/ipv4/conf
+mkdir -p "$RUN/redirects"
+exec 6>"$RUN/redirects.lock"
+flock 6
+work=$(mktemp -d "$RUN/redirects-work.XXXXXX")
+trap 'rm -rf "$work"' EXIT
+: > "$work/desired"
+case "${1:-}" in
+up)
+    devices=
+    if [ "$(uci -q get xray_lab_dns.main.enabled || :)" = 1 ]; then
+        devices=$(uci -q get xray_lab_dns.main.sources || :)
+    fi
+    [ -n "$devices" ] || devices=$(uci -q get xray_core.general.lab_iface || :)
+    [ -n "$devices" ] || devices=br-lan
+    ip -4 route show table main default > "$work/routes"
+    for device in $devices; do
+        case "$device" in ''|*[!A-Za-z0-9_.:-]*|all|default) exit 1;; esac
+        if awk -v dev="$device" '{for(i=1;i<NF;i++) if($i=="dev" && $(i+1)==dev) found=1} END {exit !found}' "$work/routes"; then
+            [ -f "$SYS/$device/send_redirects" ] || exit 1
+            printf '%s\n' all "$device" >> "$work/desired"
+        fi
+    done
+    ;;
+down) ;;
+*) echo 'Usage: xray-lab-redirects up|down' >&2; exit 2;;
+esac
+sort -u "$work/desired" > "$work/sorted"
+# Save before writing, including original zeroes. Repeated up never replaces it.
+while IFS= read -r scope; do
+    if [ ! -f "$RUN/redirects/$scope" ]; then
+        value=$(cat "$SYS/$scope/send_redirects")
+        case "$value" in 0|1) ;; *) exit 1;; esac
+        printf '%s\n' "$value" > "$RUN/redirects/$scope.new"
+        mv "$RUN/redirects/$scope.new" "$RUN/redirects/$scope"
+    fi
+    echo 0 > "$SYS/$scope/send_redirects"
+done < "$work/sorted"
+for saved in "$RUN/redirects/"*; do
+    [ -f "$saved" ] || continue
+    scope=${saved##*/}
+    case "$scope" in *.new) continue;; esac
+    grep -qxF "$scope" "$work/sorted" && continue
+    # Do not undo an administrator's subsequent change. A removed device needs no restore.
+    if [ -f "$SYS/$scope/send_redirects" ] && [ "$(cat "$SYS/$scope/send_redirects")" = 0 ]; then
+        cat "$saved" > "$SYS/$scope/send_redirects"
+    fi
+    rm -f "$saved"
+done

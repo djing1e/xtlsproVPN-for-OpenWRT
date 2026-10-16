@@ -51,6 +51,7 @@ export function job() {
     if (j.state=='failed') {
         let text=capture(['tail','-n','25',run_dir+'/job.log']).text;
         let download=match(text,/Subscription download failed: curl=([0-9]+), HTTP=([0-9]+)/);
+        if (index(text,'allowInsecure')>=0) j.message='Подписка не применена: устаревший параметр TLS allowInsecure. Рабочая конфигурация сохранена.';
         if (download) j.message='Не удалось обновить подписку: curl='+download[1]+', HTTP='+download[2]+'.';
         if (index(text,'previous selection restored')>=0) j.message='Локация не прошла HTTPS-проверку. Предыдущий выбор восстановлен.';
     }
@@ -168,7 +169,7 @@ export function snapshot() {
     } catch(e) {}
     const diagnostic=load(run_dir+'/diagnostics.json') || {};
     const routing=g.fx_routing=='roscomvpn'?(load('/usr/share/xray/roscomvpn/profile.json') || {}):{};
-    return {version:'1.0.0-r4',routing:{profile:g.fx_routing || 'all-proxy',updated:positive_number(routing._router_updated),upstream:positive_number(int(routing.LastUpdated)),geoip_version:match(routing.Geoipurl || '',/@([0-9]{12})\//)?.[1] || null,geosite_version:match(routing.Geositeurl || '',/@([0-9]{12})\//)?.[1] || null},diagnostics_checked:diagnostic.checked || null,diagnostics_summary:{job_id:diagnostic.job_id,errors:length(filter(diagnostic.checks || [],c=>c.state=='error')),pending:length(filter(diagnostic.checks || [],c=>c.state=='pending'))},subscription:subscription(),updates:{lists:list_updated(),subscription:update_history('subscription'),routing:update_history('routing')},time:now,uptime:uptime(),enabled:g.transparent_proxy_enable=='1',
+    return {version:'1.0.0-r5',routing:{profile:g.fx_routing || 'all-proxy',updated:positive_number(routing._router_updated),upstream:positive_number(int(routing.LastUpdated)),geoip_version:match(routing.Geoipurl || '',/@([0-9]{12})\//)?.[1] || null,geosite_version:match(routing.Geositeurl || '',/@([0-9]{12})\//)?.[1] || null},diagnostics_checked:diagnostic.checked || null,diagnostics_summary:{job_id:diagnostic.job_id,errors:length(filter(diagnostic.checks || [],c=>c.state=='error')),pending:length(filter(diagnostic.checks || [],c=>c.state=='pending'))},subscription:subscription(),updates:{lists:list_updated(),subscription:update_history('subscription'),routing:update_history('routing')},time:now,uptime:uptime(),enabled:g.transparent_proxy_enable=='1',
         mode:g.fx_mode || 'manual',location:g.fx_location || '',core:{running:pid!=null,pid:pid || null,version,
             rss:mem('VmRSS',proc),peak:mem('VmHWM',proc)},
         memory:{total:mem('MemTotal',memory),available:mem('MemAvailable',memory)},flow_offloading,
@@ -248,6 +249,10 @@ export function diagnose() {
     check('core','Версия xtlsproVPN',!!s.core.version,s.core.version || 'Не определена');
     const validation=capture(['env','GOMEMLIMIT=128MiB','/usr/libexec/forkop-xray/xray','run','-test','-c','/var/etc/xray/config.json']);
     check('core','Конфигурация xtlsproVPN',validation.ok,validation.ok?'Проверка ядром пройдена':'Конфигурация отсутствует или отклонена ядром');
+    for (let kind,title in {subscription:'Последнее обновление подписки',routing:'Последнее обновление маршрутизации'}) {
+        const update=s.updates?.[kind];
+        if (update?.state=='error') add({group:'core',title,state:'error',detail:(update.error || 'Обновление не применено.')+' Проверка работающего прокси выполняется отдельно.'});
+    }
     stage('interface');
     check('interface','Наблюдаемый интерфейс',s.interface.up,s.interface.name+' / '+s.interface.device);
     const gateway=capture(['ip','-4','route','show','default']);
