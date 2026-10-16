@@ -1,0 +1,4 @@
+config support 'main'
+    option enabled '0'
+    option management_url ''
+    option hostname ''

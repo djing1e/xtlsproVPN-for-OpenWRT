@@ -1,0 +1,28 @@
+#!/usr/bin/ucode
+let fs=require('fs');
+let op=ARGV[0], method=ARGV[1];
+if (op=='list') {
+    print('{"status":{},"action":{"action":"","management_url":"","hostname":"","setup_key":""}}');
+    exit(0);
+}
+if (op!='call') exit(1);
+if (method=='status') {
+    let p=fs.popen('/usr/bin/xray-lab-netbird status 2>/dev/null','r');
+    let body=p?.read('all');
+    let rc=p?.close();
+    print(rc==0 && body ? body : '{"error":"Не удалось прочитать статус NetBird"}');
+    exit(0);
+}
+if (method!='action') {print('{"error":"Unknown method"}');exit(0);}
+let request;
+try { request=json(fs.stdin.read(8193) || '{}'); } catch(e) {}
+if (type(request)!='object' || index(['install','connect','disconnect'],request.action)<0) {
+    print('{"error":"Недопустимое действие NetBird"}');exit(0);
+}
+// Only an allowlisted action enters the shell; the key travels through stdin.
+let p=fs.popen('/usr/bin/xray-lab-netbird launch '+request.action+' 2>/dev/null','w');
+if (!p) {print('{"error":"Не удалось запустить NetBird"}');exit(0);}
+p.write(sprintf('%J',request));
+let rc=p.close();
+// launch prints its JSON response to inherited stdout.
+if (rc!=0) print('{"error":"Не удалось запустить операцию NetBird"}');
