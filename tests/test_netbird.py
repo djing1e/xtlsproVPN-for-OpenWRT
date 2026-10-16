@@ -52,7 +52,11 @@ if name=='netbird':
    assert stat.S_IMODE(p.stat().st_mode)==0o600
    (r/'key-hash').write_text(hashlib.sha256(p.read_bytes()).hexdigest())
   if scenario=='failed-connect':
-   print('failed key='+os.environ['TEST_KEY']);sys.exit(1)
+   print('failed setup key='+os.environ['TEST_KEY'],file=sys.stderr);sys.exit(1)
+  if scenario=='failed-tls':
+   print('x509: certificate signed by unknown authority',file=sys.stderr);sys.exit(1)
+  if scenario=='failed-dns':
+   print('lookup nb.example.test: no such host',file=sys.stderr);sys.exit(1)
   (r/'connected').touch()
 elif name=='pidof':
  print('1234')
@@ -168,9 +172,17 @@ class NetBird(unittest.TestCase):
         self.stage();r=self.worker(scenario='failed-connect')
         self.assertNotEqual(r.returncode,0)
         self.assertNotIn(KEY,r.stdout+r.stderr+(self.run/'job.json').read_text())
+        self.assertIn('Сервер отклонил регистрацию',self.job()['message'])
         self.assertFalse((self.run/'setup.key').exists())
         self.assertFalse((self.run/'request.json').exists())
         self.assertEqual(json.loads(self.config.read_text()),self.original)
+
+    def test_login_diagnostics_classify_stderr(self):
+        for scenario,message in [('failed-tls','TLS-сертификата'),('failed-dns','DNS-имя')]:
+            self.stage();r=self.worker(scenario=scenario)
+            self.assertNotEqual(r.returncode,0)
+            self.assertIn(message,self.job()['message'])
+            self.assertNotIn(KEY,json.dumps(self.job()))
 
     def test_missing_flags_refused_before_down(self):
         self.stage();r=self.worker(scenario='old-client')
@@ -279,12 +291,14 @@ class NetBird(unittest.TestCase):
         launcher.chmod(0o755)
         rpc=self.r/'rpc.uc'
         rpc.write_text((FILES/'usr/libexec/rpcd/xray_lab_netbird').read_text()
-                       .replace('/usr/bin/xray-lab-netbird',str(launcher)))
+                       .replace('/usr/bin/xray-lab-netbird',str(launcher))
+                       .replace('/var/run/xtlspro-netbird',str(self.run)))
         result=subprocess.run(['ucode',str(rpc),'call','action'],
                               input=json.dumps(dict(self.params,action='connect')),
                               env=self.env,capture_output=True,text=True,timeout=5)
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertEqual(json.loads(result.stdout),{'ok':True})
+        self.assertEqual(list(self.run.glob('rpc-*.json')),[])
         for _ in range(60):
             if self.job()['state'] in ['done','failed']:break
             time.sleep(.05)

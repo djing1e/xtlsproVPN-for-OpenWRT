@@ -8,9 +8,9 @@ const SERVICE='/etc/init.d/netbird';
 const GUARD='/etc/init.d/xray_netbird_guard';
 const CONFIG='xray_lab_netbird';
 function quote(v) {return "'"+replace(''+v,/'/g,"'\\''")+"'";}
-function capture(args,seconds) {
+function capture(args,seconds,stderr) {
     let command=join(' ',map(['timeout','-k','5',''+(seconds || 5),...args],quote));
-    let p=fs.popen(command+' 2>/dev/null','r');
+    let p=fs.popen(command+(stderr?' 2>&1':' 2>/dev/null'),'r');
     if (!p) return {ok:false,text:''};
     let text=p.read('all') || '', rc=p.close();
     return {ok:rc==0,text,code:rc};
@@ -78,6 +78,26 @@ function status() {
 }
 function checked(args,seconds,message) {
     if (!capture(args,seconds).ok) die(message);
+}
+function login_failure(result,has_key) {
+    let text=lc(result.text || '');
+    let reason='Не удалось подключиться; проверьте журнал службы NetBird';
+    if (result.code==124 || result.code==137 || match(text,/context deadline|timed out|i\/o timeout/))
+        reason='Истекло время ожидания сервера NetBird';
+    else if (match(text,/lookup|no such host|name resolution/))
+        reason='Не удалось разрешить DNS-имя сервера NetBird';
+    else if (match(text,/x509|certificate|tls handshake/))
+        reason='Ошибка проверки TLS-сертификата сервера NetBird';
+    else if (match(text,/setup.?key|permission.?denied|unauthenticated|unauthorized|invalid.?key/))
+        reason='Сервер отклонил регистрацию: проверьте setup key, срок действия и лимит использований';
+    else if (match(text,/connection refused|unavailable|no route to host|network is unreachable/))
+        reason='Сервер NetBird недоступен по сети';
+    else if (match(text,/unknown flag|unknown command|flag needs an argument/))
+        reason='Установленный клиент NetBird не принял параметры команды';
+    else if (!has_key && match(text,/sso|login|authentication/))
+        reason='Для регистрации устройства требуется setup key';
+    // Classify stderr without exporting raw login output, keys or SSO tokens.
+    return reason+' (код '+result.code+').';
 }
 function words(v) {return type(v)=='array'?v:split(v || '',/[[:space:]]+/);}
 function access_firewall() {
@@ -153,9 +173,9 @@ function perform(action,p) {
         key.close();push(args,'--setup-key-file',RUN+'/setup.key');
     }
     // Output is deliberately discarded: login errors may contain credentials.
-    let up=capture(args,90);
+    let up=capture(args,90,true);
     fs.unlink(RUN+'/setup.key');
-    if (!up.ok) die('NetBird не подключился. Проверьте адрес, доступность сервера и setup key. Повторное подключение может потребовать ключ.');
+    if (!up.ok) die(login_failure(up,!!p.setup_key));
     let d=daemon_status();
     if (d?.management?.connected!==true || !d?.netbirdIp)
         die('Сервер управления пока не подтвердил подключение. Повторите проверку статуса.');
