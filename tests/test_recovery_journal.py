@@ -158,6 +158,13 @@ start_service
                 else:
                     self.assertEqual(result.returncode,0,result.stderr);self.assertIn('old-core',result.stdout);self.assertIn('STARTED',result.stdout)
 
+    def test_early_boot_recovers_with_proxy_autostart_disabled(self):
+        self.command('prepare');self.mutate()
+        source=(ROOT/'etc/init.d/xray_lab_recovery').read_text().replace('/usr/bin/xray-lab-subscription-journal',str(self.helper))
+        init=self.root/'early-init';init.write_text(source);self.helper.chmod(0o755)
+        result=subprocess.run(['sh','-c','. "$1"; start','_',str(init)],env=self.env,capture_output=True,text=True,timeout=5)
+        self.assertEqual(result.returncode,0,result.stderr);self.assert_old()
+
     def test_truncated_manifest_is_rejected(self):
         self.command('prepare');self.mutate()
         (self.journal/'checksums').write_text('')
