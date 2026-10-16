@@ -1,0 +1,37 @@
+name: Publish validated v1.0.0
+on:
+  workflow_dispatch:
+  push:
+    branches: ['main']
+permissions:
+  contents: read
+concurrency:
+  group: publish-xtlsprovpn-v1.0.0
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'Release v1.0.0'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check source and recovery tests
+        run: |
+          python3 scripts/check-source.py
+          python3 -m unittest discover -s tests -p 'test_release_publish.py'
+          python3 -m unittest discover -s tests -p 'test_recovery_journal.py'
+          python3 -m unittest discover -s tests -p 'test_sync_transaction.py'
+          python3 -m unittest discover -s tests -p 'test_redirects.py'
+          python3 -m unittest discover -s tests -p 'test_stop_safety.py'
+          python3 -m unittest discover -s tests -p 'test_local_policy.py'
+          python3 -m unittest discover -s tests -p 'test_core_auto_rollback.py'
+          python3 -m unittest discover -s tests -p 'test_schedule_cron_harness.py'
+      - name: Verify and publish the hardware-tested APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/publish-release-v1.sh
