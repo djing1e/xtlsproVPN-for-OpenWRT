@@ -7,6 +7,7 @@ CORE=/etc/config/xray_core
 INIT=/etc/init.d/xray_core
 BIN=/usr/libexec/forkop-xray/xray
 LIB=/usr/share/xray
+JOURNAL=/usr/bin/xray-lab-subscription-journal
 mkdir -p "$RUN"
 if [ "${FX_LOCK_HELD:-0}" != 1 ];then
     exec 8>"$RUN/action.lock"
@@ -17,6 +18,10 @@ if [ -f "$RUN/subscription-recovery" ];then
     echo 'A previous subscription rollback is unresolved. Inspect subscription-recovery before updating again.' >&2
     exit 1
 fi
+"$JOURNAL" check
+read -r process_stat < /proc/self/stat
+FX_SYNC_OWNER="$(cat /proc/sys/kernel/random/boot_id):$(printf '%s\n' "$process_stat" | awk '{print $1 ":" $22}')"
+export FX_SYNC_OWNER
 WORK=$(mktemp -d /tmp/xtls-sync-safe.XXXXXX)
 APPLIED=0
 COMMITTED=0
@@ -100,6 +105,7 @@ finish() {
                 else
                     echo 'Previous configuration restored; proxy remains stopped.'
                 fi
+                "$JOURNAL" resolved || KEEP_WORK=1
                 echo 'Rollback completed.' >> "$RUN/last-apply-failure.log"
             else
                 KEEP_WORK=1
@@ -169,6 +175,7 @@ if [ "$unchanged" != 1 ];then
     ucode - "$WORK/config" "$WAS_ENABLED" <<'UC'
 let c=require('uci').cursor(ARGV[0]);c.load('xray_core');c.set('xray_core','general','transparent_proxy_enable',ARGV[1]=='1'?'1':'0');if(!c.commit('xray_core'))die('Cannot stage desired proxy state');
 UC
+    "$JOURNAL" prepare "$WORK"
     APPLIED=1
     cp "$WORK/config/xray_core" "$CORE.sync-new"
     chmod 600 "$CORE.sync-new"
@@ -181,6 +188,7 @@ UC
     fi
 fi
 # Publish catalogue only after the candidate has been accepted and, if running, verified.
+[ "$APPLIED" = 1 ] || "$JOURNAL" prepare "$WORK"
 APPLIED=1
 for file in $FILES;do
     [ -f "$WORK/staged/$file" ] || continue
@@ -188,5 +196,9 @@ for file in $FILES;do
     cp -p "$WORK/staged/$file" "$STATE/$file.sync-new"
     mv "$STATE/$file.sync-new" "$STATE/$file"
 done
+# Once committing begins, a write error may leave a durable commit decision.
+# Keep the verified candidate running; recovery will decide from the journal.
 COMMITTED=1
+"$JOURNAL" commit || { echo 'Commit could not be confirmed; persistent recovery journal retained.' >&2; exit 1; }
+"$JOURNAL" check || :
 if [ "$unchanged" = 1 ];then echo 'Catalogue unchanged; running core retained';else echo 'Subscription applied; candidate HTTPS and DNS verified.';fi

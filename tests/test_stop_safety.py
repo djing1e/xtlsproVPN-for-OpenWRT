@@ -15,7 +15,7 @@ if name=='init':
  if args[0]=='running':sys.exit(0 if scenario=='still-running' else 1)
  sys.exit(1 if scenario==args[0] else 0)
 if name=='uci':sys.exit(1 if scenario=='uci' else 0)
-if name in ('dnsmasq','firewall','policy'):sys.exit(1 if scenario in (name,'all') else 0)
+if name in ('dnsmasq','firewall','policy','redirects'):sys.exit(1 if scenario in (name,'all') else 0)
 if name=='ip':sys.exit(1) # already absent: cleanup must still reach firewall
 if name=='nft':
  if args[:2]==['list','table']:sys.exit(0)
@@ -32,7 +32,7 @@ class StopSafety(unittest.TestCase):
     def fixture(self, d, scenario):
         tools = d / 'tools'
         tools.mkdir()
-        for name in ('init', 'uci', 'dnsmasq', 'firewall', 'policy', 'ip', 'nft', 'logger'):
+        for name in ('init', 'uci', 'dnsmasq', 'firewall', 'policy', 'redirects', 'journal', 'ip', 'nft', 'logger'):
             p = tools / name
             p.write_text(MOCK)
             p.chmod(0o755)
@@ -46,7 +46,7 @@ class StopSafety(unittest.TestCase):
             with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as temp:
                 d = Path(temp)
                 tools, env = self.fixture(d, scenario)
-                body_local = body.replace('/etc/init.d/xray_core', str(tools / 'init'))
+                body_local = body.replace('/etc/init.d/xray_core', str(tools / 'init')).replace('/usr/bin/xray-lab-subscription-journal', str(tools / 'journal'))
                 result = subprocess.run(['sh', '-c', 'set -eu\n' + body_local], env=env,
                                         capture_output=True, text=True, timeout=5)
                 events = (d / 'events').read_text()
@@ -58,7 +58,7 @@ class StopSafety(unittest.TestCase):
 
     def test_init_cleanup_attempts_dns_and_firewall_independently(self):
         source = (ROOT / 'etc/init.d/xray_core').read_text()
-        for scenario in ('success', 'dnsmasq', 'firewall', 'policy', 'all'):
+        for scenario in ('success', 'dnsmasq', 'firewall', 'policy', 'redirects', 'all'):
             with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as temp:
                 d = Path(temp)
                 tools, env = self.fixture(d, scenario)
@@ -70,6 +70,7 @@ class StopSafety(unittest.TestCase):
                 generated.mkdir()
                 (generated / '01_firewall_include.nft').write_text('test')
                 local = source.replace('/usr/bin/xray-lab-local-policy', str(tools / 'policy'))
+                local = local.replace('/usr/bin/xray-lab-redirects', str(tools / 'redirects'))
                 local = local.replace('/etc/init.d/dnsmasq', str(tools / 'dnsmasq'))
                 local = local.replace('/etc/init.d/firewall', str(tools / 'firewall'))
                 local = local.replace('/tmp/dnsmasq', str(d / 'dnsmasq'))

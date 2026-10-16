@@ -2,7 +2,7 @@ import json,os,subprocess,tempfile,unittest
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]/'package/xtlsprovpn/files'
 MOCK='''#!/usr/bin/env python3
-import os,sys,json,time
+import os,sys,json,time,subprocess
 from pathlib import Path
 root=Path(os.environ['TEST_ROOT']);scenario=os.environ['TEST_SCENARIO'];name=Path(sys.argv[0]).name;a=sys.argv[1:]
 state=root/'service-state';core=root/'xray_core';events=root/'events'
@@ -47,27 +47,34 @@ elif name=='jsonfilter':
  d=json.loads(Path(a[a.index('-i')+1]).read_text())
  for k in a[a.index('-e')+1].removeprefix('@.').split('.'):d=d[k]
  print(str(d).lower())
+elif name=='mv':
+ if a[-1].endswith('/committed') and scenario=='commit-before-fail':sys.exit(1)
+ subprocess.run(['/bin/mv']+a,check=True)
+ if a[-1].endswith('/committed') and scenario=='commit-after-fail':sys.exit(1)
 elif name=='cp':
  if scenario=='rollback-copy-fail' and a[-1].endswith('xray_core.rollback'):sys.exit(1)
  os.execv('/bin/cp',['cp']+a)
-elif name=='sleep':pass
+elif name in ('sleep','sync'):pass
 else:raise RuntimeError(name)
 '''
 class SyncTransaction(unittest.TestCase):
  def test_failures_preserve_or_restore_working_state(self):
-  for scenario in ('download-fail','config-fail','nft-fail','candidate-fail','candidate-dns-fail','restart-fail','live-health-fail','live-dns-fail','success','unchanged','rollback-copy-fail','rollback-restart-fail','rollback-health-fail'):
+  for scenario in ('download-fail','config-fail','nft-fail','candidate-fail','candidate-dns-fail','restart-fail','live-health-fail','live-dns-fail','success','unchanged','rollback-copy-fail','rollback-restart-fail','rollback-health-fail','commit-before-fail','commit-after-fail'):
    with self.subTest(scenario=scenario),tempfile.TemporaryDirectory() as t:
     p=Path(t);tools=p/'tools';tools.mkdir();state=p/'catalogue';state.mkdir();run=p/'run';run.mkdir()
     (state/'subscription.json').write_text('old-catalogue');(state/'device-hwid-short').write_text('original-id');(p/'xray_core').write_text('old-core');(p/'service-state').write_text('old');(p/'events').write_text('')
-    for name in ('uci','init','forkop-xray','ucode','xray','utpl','nft','curl','nslookup','jsonfilter','sleep','cp'):
+    for name in ('uci','init','forkop-xray','ucode','xray','utpl','nft','curl','nslookup','jsonfilter','sleep','cp','sync','mv'):
      f=tools/name;f.write_text(MOCK);f.chmod(0o755)
     source=(ROOT/'usr/bin/xray-lab-sync-safe').read_text().replace('RUN=/var/run/xray-lab-control','RUN='+str(run)).replace('STATE=/etc/forkop-xray','STATE='+str(state)).replace('CORE=/etc/config/xray_core','CORE='+str(p/'xray_core')).replace('INIT=/etc/init.d/xray_core','INIT='+str(tools/'init')).replace('BIN=/usr/libexec/forkop-xray/xray','BIN='+str(tools/'xray')).replace('/etc/xtlsprovpn-last-apply-failure.log',str(p/'failure.log')).replace('/tmp/xtls-sync-safe.',str(p/'work.'))
+    journal=(ROOT/'usr/bin/xray-lab-subscription-journal').read_text().replace('RUN=/var/run/xray-lab-control','RUN='+str(run)).replace('STATE=/etc/forkop-xray','STATE='+str(state)).replace('CORE=/etc/config/xray_core','CORE='+str(p/'xray_core'))
+    helper=tools/'journal';helper.write_text(journal);helper.chmod(0o755)
+    source=source.replace('JOURNAL=/usr/bin/xray-lab-subscription-journal','JOURNAL='+str(helper))
     command=p/'sync';command.write_text(source)
     env={**os.environ,'PATH':str(tools)+':'+os.environ['PATH'],'TEST_ROOT':str(p),'TEST_SCENARIO':scenario}
     r=subprocess.run(['sh',str(command)],env=env,capture_output=True,text=True,timeout=20)
     success=scenario in ('success','unchanged');self.assertEqual(r.returncode==0,success,r.stdout+r.stderr)
-    self.assertEqual((state/'subscription.json').read_text(),'new-catalogue' if success else 'old-catalogue')
-    self.assertEqual((p/'xray_core').read_text(),'new-core' if scenario in ('success','rollback-copy-fail') else 'old-core')
+    self.assertEqual((state/'subscription.json').read_text(),'new-catalogue' if success or scenario.startswith('commit-') else 'old-catalogue')
+    self.assertEqual((p/'xray_core').read_text(),'new-core' if scenario in ('success','rollback-copy-fail','commit-before-fail','commit-after-fail') else 'old-core')
     self.assertEqual((state/'device-hwid-short').read_text(),'original-id')
     marker=run/'subscription-recovery'
     if scenario.startswith('rollback-'):
@@ -78,6 +85,12 @@ class SyncTransaction(unittest.TestCase):
      again=subprocess.run(['sh',str(command)],env=env,capture_output=True,text=True,timeout=5)
      self.assertNotEqual(again.returncode,0);self.assertEqual((p/'events').read_text(),before)
     else:self.assertFalse(marker.exists())
+    if scenario.startswith('commit-'):
+     self.assertTrue((state/'.subscription-transaction').is_dir())
+     recovered=subprocess.run([str(helper),'recover'],env=env,capture_output=True,text=True,timeout=5)
+     self.assertEqual(recovered.returncode,0,recovered.stderr)
+     self.assertEqual((p/'xray_core').read_text(),'old-core' if scenario=='commit-before-fail' else 'new-core')
+     self.assertEqual((state/'subscription.json').read_text(),'old-catalogue' if scenario=='commit-before-fail' else 'new-catalogue')
     events=(p/'events').read_text()
     if scenario.startswith(('download','config','nft','candidate')) or scenario=='unchanged':self.assertNotIn('restart-',events)
     if scenario in ('restart-fail','live-health-fail','live-dns-fail'):self.assertIn('restart-old',events);self.assertEqual((p/'service-state').read_text(),'old')

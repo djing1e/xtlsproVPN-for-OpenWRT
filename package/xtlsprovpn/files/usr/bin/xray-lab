@@ -33,6 +33,7 @@ for (let key,n in c) if (n['.type']=='servers')
 UC
     ;;
 start)
+    /usr/bin/xray-lab-subscription-journal check
     for name in forkop; do
         if [ -x /etc/init.d/$name ] && /etc/init.d/$name running; then echo 'Original Forkop is running; stop this operation on the test router'; exit 1; fi
     done
@@ -125,6 +126,7 @@ start)
     echo 'Stop: xray-lab stop. Access log: /var/log/xray-lab-access.log'
     ;;
 stop)
+    /usr/bin/xray-lab-subscription-journal recover || :
     # Clear desired state before stopping; a cleanup error must not trigger watchdog recovery.
     stop_rc=0
     uci set xray_core.general.transparent_proxy_enable=0 || stop_rc=1
