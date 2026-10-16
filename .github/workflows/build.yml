@@ -4,6 +4,10 @@ on:
   push:
     branches: ['main', 'fix/safe-subscription-apply']
     tags: ['v1.0.0*']
+    paths-ignore:
+      - 'README.md'
+      - 'docs/**'
+      - '.github/workflows/release-notes.yml'
 permissions:
   contents: read
 jobs:

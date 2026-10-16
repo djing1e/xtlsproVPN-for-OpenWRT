@@ -22,17 +22,15 @@ IPv6-перехват не реализован. Точная конфигура
 
 ## Установка
 
-Скачайте `xtlsprovpn-1.0.0-r5.apk` и `SHA256SUMS` из
-[Releases](https://github.com/djing1e/xtlsproVPN-for-OpenWRT/releases/tag/v1.0.0),
-перенесите их в `/tmp` роутера и выполните:
+Выполните **одну команду по SSH на роутере** (OpenWrt 25.12.5, aarch64):
 
 ```sh
-clear
-cd /tmp
-sha256sum -c SHA256SUMS
-apk update
-apk add --allow-untrusted ./xtlsprovpn-1.0.0-r5.apk
+clear; (set -e; apk update; apk add curl ca-bundle coreutils-sha256sum; umask 077; d=$(mktemp -d /tmp/xtls-install.XXXXXX); trap 'rm -rf "$d"' EXIT; curl -fL --connect-timeout 10 --max-time 120 'https://github.com/djing1e/xtlsproVPN-for-OpenWRT/releases/download/v1.0.0/xtlsprovpn-1.0.0-r5.apk' -o "$d/package.apk"; printf '%s  %s\n' 'cdf493ff09f95e010d86f07d68ff40f8f2b38780103ef130c8f4ea1a8c6308e0' "$d/package.apk" | sha256sum -c -; apk add --allow-untrusted "$d/package.apk")
 ```
+
+Роутер сам загрузит APK релиза, проверит SHA-256 и установит пакет с зависимостями.
+Временный APK удаляется после выполнения. Скачивать файл на компьютер и переносить
+его на роутер не требуется. Ядро Xray устанавливается отдельно из интерфейса.
 
 APK первого релиза устанавливается как локальный пакет с `--allow-untrusted`.
 Постоянный ключ доверенного репозитория пакетов пока не распространяется.
