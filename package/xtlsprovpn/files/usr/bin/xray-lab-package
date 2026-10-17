@@ -1,0 +1,196 @@
+#!/bin/sh
+# The installer and its controller run from a private RAM copy owned by procd.
+set -eu
+umask 077
+RUN=/var/run/xtlspro-package
+LIB=/usr/share/xray/lab
+STATE=/etc/xtlspro-update
+mkdir -p "$RUN"
+chmod 700 "$RUN"
+mode=${1:-status}
+case "$mode" in
+status) exec ucode "$LIB/package_update.uc" status ;;
+launch)
+    action=${2:-};version=${3:-};digest=${4:-}
+    case "$action" in check) version=;digest= ;; install)
+        printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-r[0-9]+$' || exit 2
+        [ "${#version}" -lt 64 ] || exit 2
+        [ "${#digest}" -eq 64 ] || exit 2
+        case "$digest" in *[!a-f0-9]*) exit 2 ;; esac ;;
+        *) exit 2 ;;
+    esac
+    exec 7>"$RUN/launch.lock"
+    flock -n 7 || { echo '{"error":"Обновление уже запускается"}';exit 0; }
+    # A single procd instance prevents overlapping requests across rpcd reloads.
+    ubus call service list '{"name":"xtls_package_update"}' > "$RUN/service.json"
+    if [ "$(jsonfilter -i "$RUN/service.json" -e '@.xtls_package_update.instances.worker.running' 2>/dev/null || :)" = true ]; then
+        echo '{"error":"Операция обновления уже выполняется"}';exit 0
+    fi
+    work=$(mktemp -d /tmp/xtls-package.XXXXXX)
+    trap 'rm -rf "$work"' EXIT
+    cp /usr/bin/xray-lab-package "$work/worker"
+    cp "$LIB/package_update.uc" "$LIB/package_release.mjs" "$work/"
+    ucode "$work/package_update.uc" jobset pending "$action" preparing 'Подготовка операции…' 0 "$version"
+    request=$(printf '{"name":"xtls_package_update","instances":{"worker":{"command":["/bin/sh","%s/worker","worker","%s","%s","%s"],"stdout":false,"stderr":false}}}' "$work" "$action" "$version" "$digest")
+    if ! ubus call service add "$request" >/dev/null; then
+        ucode "$work/package_update.uc" jobset failed "$action" preparing 'Не удалось запустить установщик' 0 "$version"
+        rm -rf "$work"
+        echo '{"error":"Не удалось запустить установщик"}';exit 0
+    fi
+    trap - EXIT
+    echo '{"ok":true}'
+    ;;
+worker)
+    case "$0" in /tmp/xtls-package.*/worker) ;; *) exit 2 ;; esac
+    action=$2;expected=$3;expected_digest=$4
+    WORK=${0%/worker}
+    HELPER="$WORK/package_update.uc"
+    exec >"$RUN/worker.log" 2>&1
+    PHASE=preparing
+    ERROR='Операция не завершена. Проверьте соединение и повторите проверку.'
+    APPLIED=0
+    phase() {
+        PHASE=$1
+        ucode "$HELPER" jobset running "$action" "$PHASE" "$2" "$$" "$expected"
+    }
+    finish() {
+        rc=$?;trap - EXIT INT TERM
+        if [ "$rc" != 0 ]; then
+            if [ "$APPLIED" = 1 ]; then
+                ERROR='Установка APK или проверка после установки не завершилась. Автоматический откат пакета не выполняется. Проверьте диагностику; настройки сохранены в /etc/xtlspro-update/backup.tar.gz.'
+            fi
+            ucode "$HELPER" jobset failed "$action" "$PHASE" "$ERROR" "$$" "$expected" || :
+        fi
+        rm -rf "$WORK"
+        exit "$rc"
+    }
+    trap finish EXIT
+    trap '' HUP
+    trap 'exit 1' INT TERM
+    phase preparing 'Проверяем платформу и блокировки…'
+    mkdir -p /var/run/xray-lab-control /var/run/xtlspro-netbird
+    exec 9>/var/run/xray-lab-control/action.lock
+    ERROR='Выполняется другая операция Xray. Дождитесь её завершения.'
+    flock -n 9 || exit 1
+    exec 8>/var/run/xtlspro-netbird/action.lock
+    ERROR='Выполняется операция NetBird. Дождитесь её завершения.'
+    flock -n 8 || exit 1
+    . /etc/openwrt_release
+    ERROR='Эта сборка обновлений предназначена для OpenWrt 25.12.5 / aarch64.'
+    [ "${DISTRIB_RELEASE:-}" = 25.12.5 ] && [ "$(uname -m)" = aarch64 ] || exit 1
+    arch=$(uname -m)
+    fetch() {
+        url=$1;out=$2;limit=$3
+        # Always verify HTTPS, including redirects; never run remote shell code.
+        if curl -fsSL --proto '=https' --proto-redir '=https' --noproxy '*' \
+            --connect-timeout 10 --max-time 90 --max-filesize "$limit" "$url" -o "$out" 8>&- 9>&-; then return 0;fi
+        curl -fsSL --proto '=https' --proto-redir '=https' --proxy socks5h://127.0.0.1:1080 --noproxy '' \
+            --connect-timeout 10 --max-time 90 --max-filesize "$limit" "$url" -o "$out" 8>&- 9>&-
+    }
+    verify() {
+        [ "$(wc -c < "$2")" -eq "$3" ] &&
+            printf '%s  %s\n' "$1" "$2" | sha256sum -c - >/dev/null
+    }
+    field() { jsonfilter -i "$1" -e "@.$2"; }
+    phase checking 'Получаем сведения о стабильном релизе…'
+    ERROR='Не удалось получить проверяемый стабильный релиз. Рабочая установка не изменена.'
+    ucode "$HELPER" clear
+    fetch https://api.github.com/repos/djing1e/xtlsproVPN-for-OpenWRT/releases/latest "$WORK/release.json" 1048576
+    ucode "$HELPER" candidate "$WORK/release.json" "$WORK/summary.json"
+    current_candidate=$(field "$WORK/summary.json" version)
+    # Old published releases may predate update.json. A current/newer package
+    # still reports a successful no-op; installation always requires a manifest.
+    if apk info -e "xtlsprovpn>=$current_candidate" >/dev/null 2>&1; then
+        ucode "$HELPER" catalog "$WORK/summary.json"
+        [ "$action" = check ] || { ERROR='Установлена эта или более новая версия.';exit 1; }
+        ucode "$HELPER" jobset done check checked 'Установлена актуальная или более новая версия.' "$$" "$current_candidate"
+        exit 0
+    fi
+    ucode "$HELPER" assets "$WORK/release.json" "$WORK/assets.json"
+    fetch "$(field "$WORK/assets.json" url)" "$WORK/update.json" 16384
+    verify "$(field "$WORK/assets.json" sha256)" "$WORK/update.json" "$(field "$WORK/assets.json" size)"
+    ucode "$HELPER" plan "$WORK/release.json" "$WORK/update.json" "$WORK/plan.json" "$DISTRIB_RELEASE" "$arch"
+    version=$(field "$WORK/plan.json" version)
+    digest=$(field "$WORK/plan.json" sha256)
+    ucode "$HELPER" catalog "$WORK/plan.json"
+    if [ "$action" = check ]; then
+        ucode "$HELPER" jobset done check checked 'Проверка стабильного релиза завершена.' "$$" "$version"
+        exit 0
+    fi
+    ERROR='Релиз изменился после проверки. Проверьте доступную версию заново.'
+    [ "$version" = "$expected" ] && [ "$digest" = "$expected_digest" ] || exit 1
+    ERROR='Установлена эта или более новая версия. Понижение и переустановка не выполняются.'
+    if apk info -e "xtlsprovpn>=$version" >/dev/null 2>&1; then exit 1;fi
+    apk info -e xtlsprovpn >/dev/null 2>&1 || exit 1
+    ERROR='Недостаточно ресурсов: требуется 24 МиБ доступной RAM и запас места во flash.'
+    available=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
+    [ "$available" -ge 24576 ] || exit 1
+    flash=$(df -Pk /overlay | awk 'NR==2 {print $4}')
+    required=$(field "$WORK/plan.json" installed_size_kb)
+    [ "$flash" -ge "$((required + 8192))" ] || exit 1
+    ramdisk=$(df -Pk /tmp | awk 'NR==2 {print $4}')
+    [ "$ramdisk" -ge 12288 ] || exit 1
+    phase downloading 'Скачиваем APK и проверяем SHA-256…'
+    ERROR='APK не скачан или не прошёл проверку размера/SHA-256. Установка не изменена.'
+    name=$(field "$WORK/plan.json" name)
+    fetch "$(field "$WORK/plan.json" url)" "$WORK/$name" 8388608
+    verify "$digest" "$WORK/$name" "$(field "$WORK/plan.json" size)"
+    phase backup 'Сохраняем настройки перед установкой…'
+    ERROR='Не удалось сохранить резервную копию. Установка отменена.'
+    mkdir -p "$STATE";chmod 700 "$STATE"
+    set -- etc/config
+    for path in etc/forkop-xray etc/netbird; do
+        [ ! -d "/$path" ] || set -- "$@" "$path"
+    done
+    tar -C / -czf "$WORK/backup.tar.gz" "$@"
+    tar -tzf "$WORK/backup.tar.gz" >/dev/null
+    bytes=$(wc -c < "$WORK/backup.tar.gz")
+    flash=$(df -Pk /overlay | awk 'NR==2 {print $4}')
+    [ "$flash" -ge "$((required + bytes / 1024 + 8192))" ] || exit 1
+    cp "$WORK/backup.tar.gz" "$STATE/backup.tar.gz.new"
+    chmod 600 "$STATE/backup.tar.gz.new"
+    mv "$STATE/backup.tar.gz.new" "$STATE/backup.tar.gz"
+    was_enabled=$(uci -q get xray_core.general.transparent_proxy_enable || :)
+    nb_connected=false
+    if [ -x /usr/bin/xray-lab-netbird ]; then
+        /usr/bin/xray-lab-netbird status > "$WORK/netbird-before.json"
+        nb_connected=$(field "$WORK/netbird-before.json" connected)
+    fi
+    if [ -f /usr/libexec/forkop-xray/xray ]; then
+        sha256sum /usr/libexec/forkop-xray/xray > "$WORK/core.sha256"
+    fi
+    phase installing 'Устанавливаем пакет. LuCI может временно потерять соединение…'
+    sync
+    APPLIED=1
+    # APK manages conffiles. Never delete the installed package, core or peer identity.
+    # Children must not retain the operation lock after the worker exits.
+    timeout -k 10 240 apk add --allow-untrusted "$WORK/$name" > "$RUN/apk.log" 2>&1 8>&- 9>&-
+    ERROR='Установленная версия не совпала с выбранной.'
+    apk info -e "xtlsprovpn=$version" >/dev/null 2>&1
+    phase verifying 'Проверяем установленную версию и соединение…'
+    [ ! -f "$WORK/core.sha256" ] || sha256sum -c "$WORK/core.sha256" >/dev/null
+    [ "$(uci -q get xray_core.general.transparent_proxy_enable || :)" = "$was_enabled" ]
+    if [ "$was_enabled" = 1 ]; then
+        ok=0
+        for attempt in 1 2 3; do
+            if ucode /usr/share/xray/lab/control.uc health > "$WORK/health.json" 8>&- 9>&- &&
+                [ "$(field "$WORK/health.json" proxy_ok)" = true ]; then ok=1;break;fi
+            sleep 5
+        done
+        [ "$ok" = 1 ]
+        ucode /usr/share/xray/lab/dns_query.uc 53 ipv4 udp >/dev/null 8>&- 9>&-
+        ucode /usr/share/xray/lab/dns_query.uc 53 ipv4 tcp >/dev/null 8>&- 9>&-
+        /usr/bin/xray-lab-control status > "$WORK/status.json"
+        [ "$(field "$WORK/status.json" interception.active)" = true ]
+    else
+        [ "$(uci -q get xray_core.general.transparent_proxy_enable || :)" != 1 ]
+        ! pidof xray >/dev/null 2>&1
+    fi
+    if [ "$nb_connected" = true ]; then
+        /usr/bin/xray-lab-netbird status > "$WORK/netbird.json"
+        [ "$(field "$WORK/netbird.json" connected)" = true ]
+    fi
+    ucode "$HELPER" jobset done install verified 'Пакет обновлён. Проверки пройдены; настройки сохранены. Перезагрузите страницу LuCI.' "$$" "$version"
+    ;;
+*) exit 2 ;;
+esac

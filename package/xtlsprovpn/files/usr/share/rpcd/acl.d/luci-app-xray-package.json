@@ -1,0 +1,7 @@
+{
+  "luci-app-xray-package": {
+    "description": "xtlsproVPN application updates from official stable releases",
+    "read": {"ubus": {"xray_lab_package": ["status"]}},
+    "write": {"ubus": {"xray_lab_package": ["launch"]}}
+  }
+}
