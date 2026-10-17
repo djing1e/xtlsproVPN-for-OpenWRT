@@ -145,19 +145,32 @@ function norm(dir){let c=cursor(dir);c.load('xray_core');let d=c.get_all('xray_c
 exit(sprintf('%J',norm(null))==sprintf('%J',norm(ARGV[0]))?0:1);
 UC
 if [ "$unchanged" != 1 ];then
+    if [ "$WAS_RUNNING" = 1 ];then
+        curl --silent --fail --noproxy '*' --max-time 2 --max-filesize 524288 \
+            http://127.0.0.1:18889/debug/vars > "$WORK/metrics.json" || :
+    fi
+    ucode "$LIB/lab/sync_probe.uc" "$WORK/config.json" /var/etc/xray/config.json "$WORK/probe.json" "$WORK/ports" "$WORK/probe-error.log" "$WORK/metrics.json" "$WORK/probe-plan.json"
+    probe_mode=$(jsonfilter -i "$WORK/probe-plan.json" -e '@.mode')
+    minimum_kb=$(jsonfilter -i "$WORK/probe-plan.json" -e '@.minimum_kb')
+    probe_memory=$(jsonfilter -i "$WORK/probe-plan.json" -e '@.gomemlimit')
     available=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
-    [ "${available:-0}" -ge 98304 ] || { echo 'Not enough RAM for isolated candidate testing; live state retained.';exit 1; }
-    echo 'Testing changed nodes, selected proxy and DNS in a separate process...'
-    ucode "$LIB/lab/sync_probe.uc" "$WORK/config.json" /var/etc/xray/config.json "$WORK/probe.json" "$WORK/ports" "$WORK/probe-error.log"
-    (
-        echo 1000 > /proc/self/oom_score_adj 2>/dev/null || :
-        export XRAY_LOCATION_ASSET="$LIB" GOMEMLIMIT=64MiB GOMAXPROCS=2
-        exec "$BIN" run -c "$WORK/probe.json"
-    ) > "$WORK/probe-core.log" 2>&1 7>&- 8>&- 9>&- &
-    PROBE_PID=$!
-    sleep 2
-    kill -0 "$PROBE_PID" 2>/dev/null || { echo 'Candidate process failed. Live state retained.';exit 1; }
-    for port in $(cat "$WORK/ports") 11980;do
+    echo "Subscription probe: $probe_mode; required_kb=$minimum_kb; available_kb=${available:-0}; GOMEMLIMIT=$probe_memory"
+    [ "${available:-0}" -ge "$minimum_kb" ] || { echo "Not enough RAM for isolated candidate testing; required_kb=$minimum_kb; available_kb=${available:-0}; live state retained.";exit 1; }
+    start_probe() {
+        available=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
+        [ "${available:-0}" -ge "$minimum_kb" ] || { echo "Not enough RAM for isolated candidate testing; required_kb=$minimum_kb; available_kb=${available:-0}; live state retained.";exit 1; }
+        XRAY_LOCATION_ASSET="$LIB" GOMEMLIMIT="$probe_memory" GOMAXPROCS=2 "$BIN" run -test -c "$1"
+        (
+            echo 1000 > /proc/self/oom_score_adj 2>/dev/null || :
+            export XRAY_LOCATION_ASSET="$LIB" GOMEMLIMIT="$probe_memory" GOMAXPROCS=2
+            exec "$BIN" run -c "$1"
+        ) > "$WORK/probe-core.log" 2>&1 7>&- 8>&- 9>&- &
+        PROBE_PID=$!
+        sleep 2
+        kill -0 "$PROBE_PID" 2>/dev/null || { echo 'Candidate process failed. Live state retained.';exit 1; }
+    }
+    probe_https() {
+        port=$1
         ok=0
         for attempt in 1 2 3;do
             code=$(curl --silent --fail --connect-timeout 4 --max-time 10 --proto '=https' --noproxy '' --proxy "socks5h://127.0.0.1:$port" --output /dev/null --write-out '%{http_code}' https://cp.cloudflare.com/generate_204) || code=000
@@ -165,9 +178,28 @@ if [ "$unchanged" != 1 ];then
             sleep 1
         done
         [ "$ok" = 1 ] || { echo "Candidate HTTPS failed on local probe $port. Live state retained.";exit 1; }
-    done
-    nslookup -type=A -timeout=3 -retry=1 openwrt.org 127.0.0.1:11981 > "$WORK/probe-dns" 2>&1
-    grep -q '^Name:' "$WORK/probe-dns" || { echo 'Candidate DNS failed. Live state retained.';exit 1; }
+    }
+    probe_dns() {
+        if ! nslookup -type=A -timeout=3 -retry=1 openwrt.org 127.0.0.1:11981 > "$WORK/probe-dns" 2>&1 ||
+            ! grep -q '^Name:' "$WORK/probe-dns";then
+            echo 'Candidate DNS failed. Live state retained.';exit 1
+        fi
+    }
+    echo 'Testing changed nodes, selected proxy and DNS in a separate process...'
+    if [ "$probe_mode" = sequential ];then
+        while read -r port probe dns;do
+            echo "Subscription probe step: SOCKS $port; DNS check=$dns"
+            start_probe "$probe"
+            probe_https "$port"
+            [ "$dns" != 1 ] || probe_dns
+            awk '/^(VmRSS|VmHWM):/' "/proc/$PROBE_PID/status" || :
+            stop_probe
+        done < "$WORK/ports"
+    else
+        start_probe "$WORK/probe.json"
+        for port in $(cat "$WORK/ports") 11980;do probe_https "$port";done
+        probe_dns
+    fi
     stop_probe
     if [ "$WAS_RUNNING" = 1 ];then
         healthy || { echo 'Existing connection is not healthy; applying changes is cancelled.';exit 1; }

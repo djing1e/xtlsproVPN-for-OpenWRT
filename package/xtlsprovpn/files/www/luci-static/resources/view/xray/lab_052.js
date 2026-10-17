@@ -31,6 +31,13 @@ function toast(title,detail,tone,persistent) {
 }
 function observe(s) {
     const j=s.job || {};
+    // A recovery job or reboot can replace the requested job before polling.
+    // The operation lock is authoritative once no backend job is running.
+    if(activeNotice && j.id!==activeNotice.id && s.operation_busy===false &&
+        !['pending','running'].includes(j.state)) {
+        activeNotice.node.remove();activeNotice=null;pending=false;
+        toast('Состояние операции изменилось','Операция больше не выполняется. Обновите статус или откройте диагностику.','warn');
+    }
     if(activeNotice && j.id===activeNotice.id && ['done','failed'].includes(j.state)) {
         activeNotice.node.remove();
         let title=j.state==='done'?(completedNames[j.action] || 'Готово'):'Операция не выполнена';
@@ -53,6 +60,7 @@ function request(op,location,label,element) {
     const note=toast(operationNames[op] || 'Операция',detail || 'Ожидаем результат…','working',true);
     return action(op,location || '').then(r=>{
         if(r.error)throw new Error(r.error);
+        if(!r.id)throw new Error('Не получен идентификатор операции. Обновите страницу и проверьте диагностику.');
         activeNotice={id:r.id,node:note,detail,location};
         return methods.status().then(observe).catch(()=>{});
     }).catch(e=>{note.remove();pending=false;activeNotice=null;toast('Операция не выполнена',e.message,'error');if(element)element.disabled=false;});

@@ -1,6 +1,7 @@
 "use strict";
 import * as fs from 'fs';
 import { cursor } from 'uci';
+import { operation_error } from './operation_error.mjs';
 export const run_dir = '/var/run/xray-lab-control';
 export function quote(v) { return "'" + replace(''+v, /'/g, "'\\''") + "'"; };
 export function command(args) { return join(' ',map(args,quote)); };
@@ -54,6 +55,7 @@ export function job() {
         if (index(text,'allowInsecure')>=0) j.message='Подписка не применена: устаревший параметр TLS allowInsecure. Рабочая конфигурация сохранена.';
         if (download) j.message='Не удалось обновить подписку: curl='+download[1]+', HTTP='+download[2]+'.';
         if (index(text,'previous selection restored')>=0) j.message='Локация не прошла HTTPS-проверку. Предыдущий выбор восстановлен.';
+        j.message=operation_error(text,j.message);
     }
     return j;
 };
@@ -169,7 +171,7 @@ export function snapshot() {
     } catch(e) {}
     const diagnostic=load(run_dir+'/diagnostics.json') || {};
     const routing=g.fx_routing=='roscomvpn'?(load('/usr/share/xray/roscomvpn/profile.json') || {}):{};
-    return {version:'1.1.1-r2',routing:{profile:g.fx_routing || 'all-proxy',updated:positive_number(routing._router_updated),upstream:positive_number(int(routing.LastUpdated)),geoip_version:match(routing.Geoipurl || '',/@([0-9]{12})\//)?.[1] || null,geosite_version:match(routing.Geositeurl || '',/@([0-9]{12})\//)?.[1] || null},diagnostics_checked:diagnostic.checked || null,diagnostics_summary:{job_id:diagnostic.job_id,errors:length(filter(diagnostic.checks || [],c=>c.state=='error')),pending:length(filter(diagnostic.checks || [],c=>c.state=='pending'))},subscription:subscription(),updates:{lists:list_updated(),subscription:update_history('subscription'),routing:update_history('routing')},time:now,uptime:uptime(),enabled:g.transparent_proxy_enable=='1',
+    return {version:'1.1.2-r1',routing:{profile:g.fx_routing || 'all-proxy',updated:positive_number(routing._router_updated),upstream:positive_number(int(routing.LastUpdated)),geoip_version:match(routing.Geoipurl || '',/@([0-9]{12})\//)?.[1] || null,geosite_version:match(routing.Geositeurl || '',/@([0-9]{12})\//)?.[1] || null},diagnostics_checked:diagnostic.checked || null,diagnostics_summary:{job_id:diagnostic.job_id,errors:length(filter(diagnostic.checks || [],c=>c.state=='error')),pending:length(filter(diagnostic.checks || [],c=>c.state=='pending'))},subscription:subscription(),updates:{lists:list_updated(),subscription:update_history('subscription'),routing:update_history('routing')},time:now,uptime:uptime(),enabled:g.transparent_proxy_enable=='1',
         mode:g.fx_mode || 'manual',location:g.fx_location || '',core:{running:pid!=null,pid:pid || null,version,
             rss:mem('VmRSS',proc),peak:mem('VmHWM',proc)},
         memory:{total:mem('MemTotal',memory),available:mem('MemAvailable',memory)},flow_offloading,

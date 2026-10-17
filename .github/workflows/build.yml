@@ -2,7 +2,7 @@ name: xtlsproVPN ARM64 package (development)
 on:
   workflow_dispatch:
   push:
-    branches: ['main', 'fix/safe-subscription-apply', 'feature/netbird-admin', 'feature/package-ui']
+    branches: ['main', 'fix/safe-subscription-apply', 'feature/netbird-admin', 'feature/package-ui', 'feature/low-memory-sync']
     tags: ['v1.0.0*']
     paths-ignore:
       - 'README.md'
@@ -44,7 +44,10 @@ jobs:
           python3 scripts/check-source.py
           python3 -m unittest discover -s tests -p 'test_netbird.py'
           python3 -m unittest discover -s tests -p 'test_dns_probe.py'
+          python3 -m unittest discover -s tests -p 'test_sync_plan.py'
+          python3 -m unittest discover -s tests -p 'test_sync_probe.py'
           node tests/test_netbird_ui.js
+          node tests/test_dashboard_jobs.js
           python3 -m unittest discover -s tests -p 'test_package_update.py'
           node tests/test_package_update_ui.js
   build:
@@ -71,9 +74,9 @@ jobs:
       - name: Build APK with official OpenWrt SDK
         run: |
           bash scripts/build-sdk.sh
-          python3 scripts/make-update-manifest.py dist/xtlsprovpn-1.1.1-r2.apk --output dist/update.json
+          python3 scripts/make-update-manifest.py dist/xtlsprovpn-1.1.2-r1.apk --output dist/update.json
       - uses: actions/upload-artifact@v4
         with:
-          name: xtlsprovpn-1.1.1-openwrt-25.12.5-arm64
+          name: xtlsprovpn-1.1.2-openwrt-25.12.5-arm64
           path: dist/*
           if-no-files-found: error
