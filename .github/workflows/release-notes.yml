@@ -1,4 +1,4 @@
-name: Sync v1.0.0 release description
+name: Sync release descriptions
 on:
   push:
     branches: ['main']
@@ -6,7 +6,7 @@ on:
       - 'install.sh'
       - 'update.sh'
       - 'tests/test_install_links.py'
-      - 'docs/releases/v1.0.0.md'
+      - 'docs/releases/**'
       - '.github/workflows/release-notes.yml'
   workflow_dispatch:
 permissions:
@@ -28,15 +28,18 @@ jobs:
           sh -n install.sh
           sh -n update.sh
           python3 -m unittest discover -s tests -p 'test_install_links.py'
-      - name: Update description of the existing release
+      - name: Update descriptions of published releases
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release view v1.0.0 >/dev/null
-          gh release edit v1.0.0 --notes-file docs/releases/v1.0.0.md
-          gh release view v1.0.0 --json body --jq .body > /tmp/release-body.md
-          python3 - <<'PY'
+          for tag in v1.0.0 v1.1.0 v1.1.1; do
+            gh release view "$tag" >/dev/null
+            gh release edit "$tag" --notes-file "docs/releases/$tag.md"
+            gh release view "$tag" --json body --jq .body > /tmp/release-body.md
+            python3 - "$tag" <<'PY'
           from pathlib import Path
-          assert Path('/tmp/release-body.md').read_text().rstrip() == Path('docs/releases/v1.0.0.md').read_text().rstrip()
+          import sys
+          assert Path('/tmp/release-body.md').read_text().rstrip() == Path('docs/releases/'+sys.argv[1]+'.md').read_text().rstrip()
           PY
+          done
