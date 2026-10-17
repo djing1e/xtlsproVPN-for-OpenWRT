@@ -45,5 +45,18 @@
       "type": "view",
       "path": "xray/monitoring_compact_052"
     }
+  },
+  "admin/services/forkop-xray/app-update": {
+    "title": "Обновление приложения",
+    "order": 4,
+    "action": {
+      "type": "view",
+      "path": "xray/app_update"
+    },
+    "depends": {
+      "acl": [
+        "luci-app-xray-package"
+      ]
+    }
   }
 }
