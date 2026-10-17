@@ -1,0 +1,32 @@
+name: Publish v1.1.2 low-memory fix
+on:
+  push:
+    branches: ['main']
+    paths:
+      - '.github/workflows/release-v112.yml'
+      - 'scripts/publish-v112.sh'
+      - 'docs/releases/v1.1.2.md'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: publish-v112
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify package source matches corrected build
+        run: git diff --exit-code 01e09446da7101fd32af7b1447796d6fd3d7d2b8 HEAD -- package/xtlsprovpn
+      - name: Wait for corrected APK, verify and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/publish-v112.sh
