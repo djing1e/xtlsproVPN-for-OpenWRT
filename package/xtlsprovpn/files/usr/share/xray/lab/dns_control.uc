@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import { cursor } from 'uci';
 import { load_rules } from './routing_options.mjs';
 import { defaults, providers, normalize, load_options } from './dns_options.mjs';
+import { dns_probe } from './dns_probe.mjs';
 const root='/var/run/xray-lab-control';
 function load(path,fallback) {try{return json(fs.readfile(path) || '') || fallback;}catch(e){return fallback;}}
 function save(path,data) {
@@ -34,13 +35,11 @@ if (op=='status') {
 } else if(op=='probe-config') {
     let c=load(ARGV[1],null);
     if(!c)die('Missing candidate config');
-    c.inbounds=filter(c.inbounds || [],x=>x.tag=='dns_server_inbound:5300');
-    if(length(c.inbounds)!=1)die('DNS inbound 5300 is required');
-    c.inbounds[0].listen='127.0.0.1';c.inbounds[0].port=15354;
-    delete c.api;delete c.metrics;
-    c.routing.rules=filter(c.routing.rules,r=>r.outboundTag!='api' && r.outboundTag!='metrics');
-    c.log={loglevel:'info',access:'none',error:ARGV[3]};
-    save(ARGV[2],c);
+    let plan=dns_probe(c,load(ARGV[4],null),load(ARGV[5],null),load(ARGV[6],null),time());
+    plan.config.log={loglevel:'info',access:'none',error:ARGV[3]};
+    save(ARGV[2],plan.config);
+    delete plan.config;
+    save(ARGV[7],plan);
 } else if(op=='jobset') {
     let before=load(root+'/dns-job.json',{});
     save(root+'/dns-job.json',{

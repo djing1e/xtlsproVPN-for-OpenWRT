@@ -103,11 +103,28 @@ worker)
     # singleton options in our include before changing the working services.
     printf 'cache-size=1000\nconf-file=%s\n' "$WORK/dnsmasq.include" > "$WORK/dnsmasq-check.conf"
     dnsmasq --test --conf-file="$WORK/dnsmasq-check.conf"
-    available_kb=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
-    [ "${available_kb:-0}" -ge 65536 ] || { ERROR_MESSAGE='Для отдельной проверки требуется 64 МиБ доступной RAM. Рабочие настройки не изменены.';echo "$ERROR_MESSAGE";exit 1; }
     phase resolver 'Проверяем DNS отдельным процессом; основной тоннель продолжает работать…'
-    ucode "$LIB/dns_control.uc" probe-config "$WORK/config.json" "$WORK/probe.json" "$WORK/probe-error.log"
-    XRAY_LOCATION_ASSET=/usr/share/xray GOMEMLIMIT=64MiB GOMAXPROCS=2 /usr/libexec/forkop-xray/xray run -c "$WORK/probe.json" > "$WORK/core.log" 2>&1 9>&- &
+    if /etc/init.d/xray_core running >/dev/null 2>&1;then
+        cp /var/etc/xray/config.json "$WORK/live.json"
+        curl --silent --fail --noproxy '*' --max-time 2 --max-filesize 524288 \
+            http://127.0.0.1:18889/debug/vars > "$WORK/live-metrics.json" || :
+    fi
+    ucode "$LIB/dns_control.uc" probe-config "$WORK/config.json" "$WORK/probe.json" "$WORK/probe-error.log" \
+        "$WORK/options.json" "$WORK/live.json" "$WORK/live-metrics.json" "$WORK/probe-plan.json"
+    minimum_kb=$(jsonfilter -i "$WORK/probe-plan.json" -e '@.minimum_kb')
+    probe_memory=$(jsonfilter -i "$WORK/probe-plan.json" -e '@.gomemlimit')
+    probe_mode=$(jsonfilter -i "$WORK/probe-plan.json" -e '@.mode')
+    echo "DNS probe: $probe_mode; minimum ${minimum_kb} KiB; GOMEMLIMIT=$probe_memory"
+    available_kb=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
+    [ "${available_kb:-0}" -ge "$minimum_kb" ] || {
+        ERROR_MESSAGE="Для проверки DNS требуется $((minimum_kb / 1024)) МиБ доступной RAM. Рабочие настройки не изменены."
+        echo "$ERROR_MESSAGE";exit 1;
+    }
+    if [ "$probe_mode" = shared-transport ];then
+        XRAY_LOCATION_ASSET=/usr/share/xray GOMEMLIMIT="$probe_memory" GOMAXPROCS=2 \
+            /usr/libexec/forkop-xray/xray run -test -c "$WORK/probe.json"
+    fi
+    XRAY_LOCATION_ASSET=/usr/share/xray GOMEMLIMIT="$probe_memory" GOMAXPROCS=2 /usr/libexec/forkop-xray/xray run -c "$WORK/probe.json" > "$WORK/core.log" 2>&1 9>&- &
     CORE_PID=$!
     sleep 2
     kill -0 "$CORE_PID"

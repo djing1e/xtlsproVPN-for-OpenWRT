@@ -43,6 +43,7 @@ jobs:
         run: |
           python3 scripts/check-source.py
           python3 -m unittest discover -s tests -p 'test_netbird.py'
+          python3 -m unittest discover -s tests -p 'test_dns_probe.py'
           node tests/test_netbird_ui.js
   build:
     needs: netbird-checks
