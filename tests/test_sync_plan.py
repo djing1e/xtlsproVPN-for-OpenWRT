@@ -71,6 +71,7 @@ class SyncPlan(unittest.TestCase):
             self.assertEqual(p['mode'],'sequential')
             lines=(d/'ports').read_text().splitlines();self.assertEqual(len(lines),1)
             port,path,dns=lines[0].split();self.assertEqual(port,'11980');self.assertEqual(dns,'1')
+            self.assertEqual(Path(path).suffix,'.json', 'Xray detects the config format from its extension')
             c=json.loads(Path(path).read_text());self.assertEqual(len(self.node(c)),1)
             self.assertEqual(Path(path).stat().st_mode & 0o777,0o600)
             self.assertEqual(c['log']['error'],str(d/'error.log'))

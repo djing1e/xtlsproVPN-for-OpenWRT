@@ -10,7 +10,7 @@ if(ARGV[6]) {
     if(plan) {
         let lines=[];
         for(let n,step in plan.steps) {
-            const path=ARGV[2]+'.'+n;
+            const path=ARGV[2]+'.'+n+'.json';
             step.config.log.error=ARGV[4];
             if(!fs.writefile(path,sprintf('%J',step.config)))die('Cannot stage sequential probe');
             if(!fs.chmod(path,0600))die('Cannot protect sequential probe');

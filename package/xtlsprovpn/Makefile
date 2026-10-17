@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 PKG_NAME:=xtlsprovpn
 PKG_VERSION:=1.1.2
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 PKG_LICENSE:=GPL-2.0-or-later MPL-2.0
 PKG_MAINTAINER:=xtlsproVPN
 include $(INCLUDE_DIR)/package.mk
