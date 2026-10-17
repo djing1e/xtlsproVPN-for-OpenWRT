@@ -1,5 +1,6 @@
 #!/usr/bin/ucode
 let fs = require('fs');
+import { operation_error } from './operation_error.mjs';
 
 if (ARGV[0] == 'check') exit(0);
 
@@ -53,6 +54,7 @@ if (action == 'start') {
 
     if (rc != 0 && index(text,'allowInsecure')>=0)
         data.error='Конфигурация отклонена: устаревший TLS allowInsecure. Рабочие настройки сохранены.';
+    if (rc != 0) data.error=operation_error(text,data.error);
     if (rc == 0) data.last_success = data.finished;
     data.pid = null;
 } else {
