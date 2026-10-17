@@ -1,0 +1,41 @@
+#!/usr/bin/ucode
+let fs=require('fs');
+let op=ARGV[0], method=ARGV[1];
+if (op=='list') {
+    print('{"status":{},"action":{"action":"","management_url":"","hostname":"","setup_key":""}}');
+    exit(0);
+}
+if (op!='call') exit(1);
+if (method=='status') {
+    let p=fs.popen('/usr/bin/xray-lab-netbird status 2>/dev/null','r');
+    let body=p?.read('all');
+    let rc=p?.close();
+    print(rc==0 && body ? body : '{"error":"Не удалось прочитать статус NetBird"}');
+    exit(0);
+}
+if (method!='action') {print('{"error":"Unknown method"}');exit(0);}
+let request;
+try { request=json(fs.stdin.read(8193) || '{}'); } catch(e) {}
+if (type(request)!='object' || index(['install','connect','disconnect'],request.action)<0) {
+    print('{"error":"Недопустимое действие NetBird"}');exit(0);
+}
+// rpcd consumes the interpreter's print buffer, not a child's inherited stdout.
+// Keep request/response transport explicit; the key still travels through stdin.
+let run='/var/run/xtlspro-netbird';
+fs.mkdir(run,0700);fs.chmod(run,0700);
+let id=trim(fs.readfile('/proc/sys/kernel/random/uuid') || '');
+if (!match(id,/^[a-f0-9-]{36}$/)) {print('{"error":"Не удалось создать ответ RPC"}');exit(0);}
+let response=run+'/rpc-'+id+'.json';
+let file=fs.open(response,'w',0600);
+if (!file) {print('{"error":"Не удалось создать ответ RPC"}');exit(0);}
+file.close();
+let p=fs.popen('/usr/bin/xray-lab-netbird launch '+request.action+' >'+response+' 2>/dev/null','w');
+if (!p) {fs.unlink(response);print('{"error":"Не удалось запустить NetBird"}');exit(0);}
+p.write(sprintf('%J',request));
+let rc=p.close();
+let result;
+try {result=json(fs.readfile(response) || '');} catch(e) {}
+fs.unlink(response);
+if (rc!=0 || type(result)!='object' || !(result.ok===true || type(result.error)=='string'))
+    print('{"error":"Не удалось получить ответ операции NetBird"}');
+else print(sprintf('%J',result));

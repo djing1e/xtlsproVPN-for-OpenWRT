@@ -1,0 +1,11 @@
+#!/bin/sh
+# The OpenWrt NetBird init script does not always set procd respawn.
+# Never treat an unavailable uplink as a reason to restart the daemon.
+while :; do
+    [ "$(uci -q get xray_lab_netbird.main.enabled)" = 1 ] || exit 0
+    if /etc/init.d/netbird enabled >/dev/null 2>&1 &&
+        ! pidof netbird >/dev/null 2>&1; then
+        /etc/init.d/netbird start >/dev/null 2>&1 || :
+    fi
+    sleep 30
+done

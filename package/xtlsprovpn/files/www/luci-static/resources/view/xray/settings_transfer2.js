@@ -3,6 +3,7 @@
 'require view.xray.core_update_transfer2 as coreUpdate';
 'require view.xray.dns_panel as dnsSettings';
 'require view.xray.schedule as schedule';
+'require view.xray.netbird as netbird';
 'require view';
 'require form';
 'require uci';
@@ -37,11 +38,11 @@ return view.extend({
             'Пустое поле — постоянный HWID роутера вида xxxx-xxxx-xxxx-xxxx. Свой HWID имеет приоритет.');
         o.password=true;o.depends('hwid_enabled','1');
         o.validate=(sid,v)=>!v || /^[A-Za-z0-9=-]{10,64}$/.test(v)?true:'От 10 до 64 символов: латинские буквы, цифры, = и -.';
-        return Promise.all([map.render(),subscription.render(),schedule.render(),coreUpdate.render(),dnsSettings.render(initial[2]),routingPanel.render(initial[2])]).then(parts=>{
+        return Promise.all([map.render(),subscription.render(),schedule.render(),coreUpdate.render(),dnsSettings.render(initial[2]),routingPanel.render(initial[2]),netbird.render()]).then(parts=>{
             const content=E('div'), tabs=E('div',{'class':'xt-tabs',role:'tablist','aria-label':'Разделы настроек'});
             const panels=[], controls=[];
-            const labels=['Подписка','DNS и сеть','Маршрутизация','Автообновление','Ядро','Дополнительно'];
-            const items=[parts[1],parts[4],parts[5],parts[2],parts[3],parts[0]];
+            const labels=['Подписка','DNS и сеть','Маршрутизация','Автообновление','Ядро','Административный доступ','Дополнительно'];
+            const items=[parts[1],parts[4],parts[5],parts[2],parts[3],parts[6],parts[0]];
             function select(index){
                 panels.forEach((p,i)=>{p.style.display=i===index?'':'none';});
                 controls.forEach((b,i)=>{b.setAttribute('aria-selected',String(i===index));b.tabIndex=i===index?0:-1;});
@@ -61,7 +62,7 @@ return view.extend({
             return E('div',{'class':'xt-settings'},[lab.style(),
                 E('style',{},'.xt-settings{max-width:1100px}.xt-tabs{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}.xt-tabs [aria-selected="true"]{border-color:#00b991;color:#00b991}.xt-settings .cbi-map{margin-top:0}'),
                 E('h2',{},'xtlsproVPN'),tabs,content,
-                E('p',{'class':'fx-muted'},'Подписка и дополнительные параметры сохраняются кнопкой внизу страницы. DNS, маршрутизация, расписание и управление ядром имеют собственные кнопки.')]);
+                E('p',{'class':'fx-muted'},'Подписка и дополнительные параметры сохраняются кнопкой внизу страницы. DNS, маршрутизация, расписание, ядро и NetBird имеют собственные кнопки.')]);
         });
     }
 });

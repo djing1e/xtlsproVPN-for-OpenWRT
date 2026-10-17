@@ -1,6 +1,6 @@
 include $(TOPDIR)/rules.mk
 PKG_NAME:=xtlsprovpn
-PKG_VERSION:=1.0.0
+PKG_VERSION:=1.1.0
 PKG_RELEASE:=5
 PKG_LICENSE:=GPL-2.0-or-later MPL-2.0
 PKG_MAINTAINER:=xtlsproVPN
@@ -11,7 +11,7 @@ define Package/xtlsprovpn
   CATEGORY:=Network
   TITLE:=xtlsproVPN router administration
   PKGARCH:=all
-  DEPENDS:=@aarch64 +luci-base +rpcd +rpcd-mod-ucode +curl +ca-bundle +ucode +ucode-mod-fs +ucode-mod-uci +ucode-mod-socket +ucode-mod-ubus +flock +coreutils-base64 +coreutils-sha256sum +unzip +firewall4 +kmod-nft-tproxy +ip-full
+  DEPENDS:=@aarch64 +luci-base +rpcd +rpcd-mod-ucode +curl +ca-bundle +ucode +ucode-mod-fs +ucode-mod-uci +ucode-mod-socket +ucode-mod-ubus +flock +coreutils-base64 +coreutils-sha256sum +coreutils-timeout +unzip +firewall4 +kmod-nft-tproxy +ip-full
 endef
 
 define Package/xtlsprovpn/description
@@ -28,6 +28,7 @@ define Package/xtlsprovpn/conffiles
 /etc/config/xray_lab_dns
 /etc/config/xray_lab_core
 /etc/config/xray_lab_schedule
+/etc/config/xray_lab_netbird
 endef
 
 define Package/xtlsprovpn/install

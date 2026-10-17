@@ -1,8 +1,8 @@
-name: xtlsproVPN 1.0.0 ARM64 package
+name: xtlsproVPN ARM64 package (development)
 on:
   workflow_dispatch:
   push:
-    branches: ['main', 'fix/safe-subscription-apply']
+    branches: ['main', 'fix/safe-subscription-apply', 'feature/netbird-admin']
     tags: ['v1.0.0*']
     paths-ignore:
       - 'README.md'
@@ -11,7 +11,42 @@ on:
 permissions:
   contents: read
 jobs:
+  netbird-checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: ucode-lang/ucode
+          ref: 85922056ef7abeace3cca3ab28bc1ac2d88e31b1
+          path: .host-src/ucode
+      - name: Build pinned host ucode for controller tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential pkg-config libjson-c-dev
+          cmake -S .host-src/ucode -B .host-build/ucode \
+            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/ucode" -DCMAKE_INSTALL_LIBDIR=lib \
+            -DUCI_SUPPORT=OFF -DUBUS_SUPPORT=OFF -DULOOP_SUPPORT=OFF \
+            -DRTNL_SUPPORT=OFF -DNL80211_SUPPORT=OFF -DDIGEST_SUPPORT=OFF -DZLIB_SUPPORT=OFF
+          cmake --build .host-build/ucode -j2
+          cmake --install .host-build/ucode
+          mkdir -p "$RUNNER_TEMP/xtls-tools"
+          cat > "$RUNNER_TEMP/xtls-tools/ucode" <<'SH'
+          #!/bin/sh
+          export LD_LIBRARY_PATH="$RUNNER_TEMP/ucode/lib"
+          exec "$RUNNER_TEMP/ucode/bin/ucode" -L "$RUNNER_TEMP/ucode/lib/ucode" "$@"
+          SH
+          chmod +x "$RUNNER_TEMP/xtls-tools/ucode"
+          echo "$RUNNER_TEMP/xtls-tools" >> "$GITHUB_PATH"
+      - name: Check NetBird control, jobs and UI
+        run: |
+          python3 scripts/check-source.py
+          python3 -m unittest discover -s tests -p 'test_netbird.py'
+          python3 -m unittest discover -s tests -p 'test_dns_probe.py'
+          node tests/test_netbird_ui.js
   build:
+    needs: netbird-checks
     # Release promotion and external installer-only changes reuse the tested APK.
     if: github.event_name != 'push' || (!startsWith(github.event.head_commit.message, 'Release v1.0.0') && !startsWith(github.event.head_commit.message, 'installer:'))
     runs-on: ubuntu-24.04
@@ -35,6 +70,6 @@ jobs:
         run: bash scripts/build-sdk.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: xtlsprovpn-1.0.0-openwrt-25.12.5-arm64
+          name: xtlsprovpn-1.1.0-openwrt-25.12.5-arm64
           path: dist/*
           if-no-files-found: error
