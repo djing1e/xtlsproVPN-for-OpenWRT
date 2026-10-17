@@ -48,7 +48,7 @@ jobs:
   build:
     needs: netbird-checks
     # Release promotion and external installer-only changes reuse the tested APK.
-    if: github.event_name != 'push' || (!startsWith(github.event.head_commit.message, 'Release v1.0.0') && !startsWith(github.event.head_commit.message, 'installer:'))
+    if: github.event_name != 'push' || (!startsWith(github.event.head_commit.message, 'Release v') && !startsWith(github.event.head_commit.message, 'installer:'))
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:

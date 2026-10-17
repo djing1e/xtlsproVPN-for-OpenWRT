@@ -2,9 +2,9 @@
 # Published stable release; bump version, URL and hash together.
 set -eu
 MODE=update
-VERSION='1.0.0-r5'
-SHA256='cdf493ff09f95e010d86f07d68ff40f8f2b38780103ef130c8f4ea1a8c6308e0'
-URL="https://github.com/djing1e/xtlsproVPN-for-OpenWRT/releases/download/v1.0.0/xtlsprovpn-$VERSION.apk"
+VERSION='1.1.0-r5'
+SHA256='eb9c3e45141409d1d2e5eaabfaff2012518c9a7f01a1c8daf89844dfc8bfd8d2'
+URL="https://github.com/djing1e/xtlsproVPN-for-OpenWRT/releases/download/v1.1.0/xtlsprovpn-$VERSION.apk"
 
 fail() { echo "xtlsproVPN: $*" >&2; exit 1; }
 [ "$#" -eq 0 ] || fail 'Параметры не поддерживаются.'
@@ -44,3 +44,4 @@ printf '%s  %s\n' "$SHA256" "$package" | sha256sum -c -
 apk add --allow-untrusted "$package"
 echo "xtlsproVPN $VERSION: установка пакета завершена."
 echo 'Откройте Services → xtlsproVPN в LuCI. Ядро Xray управляется отдельно.'
+
