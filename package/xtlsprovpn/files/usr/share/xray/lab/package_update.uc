@@ -12,8 +12,11 @@ function save(p,v) {
 }
 function quote(s) {return "'"+replace(''+s,/'/g,"'\\''")+"'";}
 function installed() {
-    let p=fs.popen('apk info -v xtlsprovpn 2>/dev/null','r');
-    let body=p?.read('all') || '';p?.close();
+    // --exists restricts the query to installed packages and prints one line.
+    // Plain `info -v NAME` prints descriptive headers, not a version-only list.
+    let p=fs.popen('apk info -v -e xtlsprovpn 2>/dev/null','r');
+    let body=p?.read('all') || '',rc=p?.close();
+    if (rc!=0) return null;
     for (let line in split(body,'\n')) {
         if (index(line,'xtlsprovpn-')==0 && version_ok(substr(line,11))) return substr(line,11);
     }

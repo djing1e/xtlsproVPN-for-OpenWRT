@@ -55,7 +55,8 @@ elif cmd=='jsonfilter':
 elif cmd=='apk':
  v=(r/'installed').read_text().strip()
  def ver(x):return tuple(map(int,re.split(r'\.|-r',x)))
- if a[:2]==['info','-v']:print('xtlsprovpn-'+v)
+ if a[:2]==['info','-v']:
+  print('xtlsprovpn-'+v if '-e' in a else 'xtlsprovpn-'+v+' description:\nRouter administration\n')
  elif a[:2]==['info','-e']:
   c=a[2]
   if '>=' in c:sys.exit(0 if ver(v)>=ver(c.split('>=')[1]) else 1)
@@ -260,7 +261,7 @@ elif cmd=='ucode':pass
     def test_status_recognizes_interrupted_previous_boot(self):
         with tempfile.TemporaryDirectory() as temp:
             d=Path(temp);state=d/'state';state.mkdir();run=d/'run';run.mkdir();bindir=d/'bin';bindir.mkdir()
-            (bindir/'apk').write_text('#!/bin/sh\necho xtlsprovpn-1.1.1-r1\n');(bindir/'apk').chmod(0o755)
+            (bindir/'apk').write_text('#!/bin/sh\ncase "$*" in\n"info -v -e xtlsprovpn") echo xtlsprovpn-1.1.1-r1 ;;\n*) printf "xtlsprovpn-1.1.1-r1 description:\\nRouter administration\\n" ;;\nesac\n');(bindir/'apk').chmod(0o755)
             s=(LIB/'package_update.uc').read_text().replace('/var/run/xtlspro-package',str(run)).replace('/etc/xtlspro-update',str(state))
             (d/'package_update.uc').write_text(s);shutil.copy2(LIB/'package_release.mjs',d)
             (state/'last.json').write_text(json.dumps({'state':'running','boot':'previous-boot','pid':1,'action':'install','version':VERSION}))
