@@ -1,0 +1,30 @@
+name: Publish r2 for UI update verification
+on:
+  push:
+    branches: ['main']
+    paths:
+      - '.github/workflows/release-ui-r2.yml'
+      - 'scripts/publish-ui-r2.sh'
+      - 'docs/releases/v1.1.1.md'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: publish-ui-r2
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test artifact promotion
+        run: python3 -m unittest discover -s tests -p test_ui_release_publish.py
+      - name: Wait for pinned r2 build, verify and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/publish-ui-r2.sh
