@@ -53,6 +53,14 @@ async function main() {
     await poller();
     assert.equal(connect.disabled, false);
     assert(nodes.some(n => n.textContent.includes('100.100.0.5/16')));
+    const summary=nodes.find(n => n.textContent.includes('100.100.0.5/16'));
+    assert.equal(summary.style.color,'#00b991');
+    const update=nodes.find(n => n.tag==='button' && n.children[0]==='Обновить NetBird');
+    assert.equal(update.disabled,true);
+    data={...data,package:{installed:'0.78.1-r1',available:'0.80.0-r1',update_available:true}};await poller();
+    assert.equal(update.disabled,false);
+    update.attrs.click();await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(calls.at(-1)[0],'update');assert.equal(update.disabled,true);
     console.log('NetBird UI: render, submit, secret clearing, busy state and polling passed');
 }
 main().catch(e => {console.error(e);process.exit(1);});

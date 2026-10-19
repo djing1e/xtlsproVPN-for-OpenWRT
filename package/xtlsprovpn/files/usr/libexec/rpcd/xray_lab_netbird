@@ -16,7 +16,7 @@ if (method=='status') {
 if (method!='action') {print('{"error":"Unknown method"}');exit(0);}
 let request;
 try { request=json(fs.stdin.read(8193) || '{}'); } catch(e) {}
-if (type(request)!='object' || index(['install','connect','disconnect'],request.action)<0) {
+if (type(request)!='object' || index(['install','connect','disconnect','check_update','update'],request.action)<0) {
     print('{"error":"Недопустимое действие NetBird"}');exit(0);
 }
 // rpcd consumes the interpreter's print buffer, not a child's inherited stdout.

@@ -107,7 +107,8 @@ start_xray() {
     procd_set_param env XRAY_LOCATION_ASSET=/usr/share/xray GOMEMLIMIT=64MiB GOMAXPROCS=2
     procd_set_param stdout 1
     procd_set_param stderr 1
-    procd_set_param file /etc/config/xray_core
+    # procd must also notice generator-only changes on an APK upgrade.
+    procd_set_param file /etc/config/xray_core /var/etc/xray/config.json
     procd_set_param pidfile /var/run/xray.pid
     procd_close_instance
 }

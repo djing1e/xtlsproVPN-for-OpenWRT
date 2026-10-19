@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 PKG_NAME:=xtlsprovpn
-PKG_VERSION:=1.1.2
-PKG_RELEASE:=2
+PKG_VERSION:=1.2.0
+PKG_RELEASE:=3
 PKG_LICENSE:=GPL-2.0-or-later MPL-2.0
 PKG_MAINTAINER:=xtlsproVPN
 include $(INCLUDE_DIR)/package.mk
@@ -34,6 +34,11 @@ endef
 define Package/xtlsprovpn/install
 	$(INSTALL_DIR) $(1)
 	$(CP) ./files/. $(1)/
+	# Install executable entry points explicitly; never inherit a lost Git mode.
+	$(INSTALL_BIN) ./files/etc/init.d/* $(1)/etc/init.d/
+	$(INSTALL_BIN) ./files/etc/uci-defaults/* $(1)/etc/uci-defaults/
+	$(INSTALL_BIN) ./files/usr/bin/* $(1)/usr/bin/
+	$(INSTALL_BIN) ./files/usr/libexec/rpcd/* $(1)/usr/libexec/rpcd/
 endef
 
 # OpenWrt default_postinst runs and removes /etc/uci-defaults entries.

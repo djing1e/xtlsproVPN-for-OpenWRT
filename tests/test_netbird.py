@@ -60,10 +60,25 @@ if name=='netbird':
   if scenario=='failed-dns':
    print('lookup nb.example.test: no such host',file=sys.stderr);sys.exit(1)
   (r/'connected').touch()
+elif name=='df':
+ print('Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/overlay 190000 80000 100000 45% /overlay')
+elif name=='sleep':pass
 elif name=='pidof':
  print('1234')
 else:
  if name=='apk' and scenario=='failed-install':sys.exit(1)
+ if name=='apk' and args==['info','-v','-e','netbird']:
+  print('netbird-'+('0.80.0-r1' if (r/'upgraded').exists() else '0.78.1-r1'))
+ if name=='apk' and args and args[0]=='list':
+  if args!=['list','-a','netbird']:sys.exit(1)
+  print('netbird-0.80.0-r1 aarch64 [installed]')
+ if name=='apk' and args[:2]==['version','-t']:print('<' if args[2]<args[3] else '=' if args[2]==args[3] else '>')
+ if name=='apk' and args[:2]==['add','--upgrade']:
+  if scenario=='bad-signature':sys.exit(1)
+  (r/'upgraded').touch()
+ if name=='netbird-service' and args==['restart']:
+  if scenario=='no-reconnect':(r/'connected').unlink(missing_ok=True)
+  else:(r/'connected').touch()
  if name=='apk' and args==['add','netbird']:
   binary=r/'bin/netbird';binary.write_text(Path(sys.argv[0]).read_text());binary.chmod(0o755)
  if name=='netbird-service' and args==['enabled']:
@@ -96,11 +111,14 @@ class NetBird(unittest.TestCase):
             'xray_core': {'general': {'transparent_proxy_enable':'1'}}
         }
         self.config.write_text(json.dumps(self.original))
-        for name in ['netbird','netbird-service','guard','firewall','apk','pidof']:
+        for name in ['netbird','netbird-service','guard','firewall','apk','pidof','df','sleep']:
             p=self.bin/name;p.write_text(MOCK);p.chmod(0o755)
         self.script=self.r/'netbird.uc'
         source=(FILES/'usr/share/xray/lab/netbird.uc').read_text()
         source=source.replace('/var/run/xtlspro-netbird',str(self.run))
+        source=source.replace('/root/.config',str(self.r/'identity'))
+        mem=self.r/'meminfo';mem.write_text('MemAvailable: 50000 kB\n')
+        source=source.replace('/proc/meminfo',str(mem))
         source=source.replace('/usr/bin/netbird',str(self.bin/'netbird'))
         source=source.replace('/etc/init.d/netbird',str(self.bin/'netbird-service'))
         source=source.replace('/etc/init.d/xray_netbird_guard',str(self.bin/'guard'))
@@ -319,6 +337,7 @@ class NetBird(unittest.TestCase):
         launcher=self.r/'launcher'
         launcher.write_text((FILES/'usr/bin/xray-lab-netbird').read_text()
                            .replace('/var/run/xtlspro-netbird',str(self.run))
+                           .replace('/var/run/xray-lab-control',str(self.r/'app-run'))
                            .replace('/usr/share/xray/lab/netbird.uc',str(self.script))
                            .replace('ucode "$LIB"', 'ucode -L '+str(self.modules)+' "$LIB"'))
         launcher.chmod(0o755)
@@ -338,13 +357,15 @@ class NetBird(unittest.TestCase):
         launcher=self.r/'launcher'
         launcher.write_text((FILES/'usr/bin/xray-lab-netbird').read_text()
                            .replace('/var/run/xtlspro-netbird',str(self.run))
+                           .replace('/var/run/xray-lab-control',str(self.r/'app-run'))
                            .replace('/usr/share/xray/lab/netbird.uc',str(self.script))
                            .replace('ucode "$LIB"', 'ucode -L '+str(self.modules)+' "$LIB"'))
         launcher.chmod(0o755)
         rpc=self.r/'rpc.uc'
         rpc.write_text((FILES/'usr/libexec/rpcd/xray_lab_netbird').read_text()
                        .replace('/usr/bin/xray-lab-netbird',str(launcher))
-                       .replace('/var/run/xtlspro-netbird',str(self.run)))
+                       .replace('/var/run/xtlspro-netbird',str(self.run))
+                           .replace('/var/run/xray-lab-control',str(self.r/'app-run')))
         result=subprocess.run(['ucode',str(rpc),'call','action'],
                               input=json.dumps(dict(self.params,action='connect')),
                               env=self.env,capture_output=True,text=True,timeout=5)
@@ -371,6 +392,7 @@ esac
         guard=self.r/'watch.sh'
         guard.write_text((FILES/'usr/bin/xray-netbird-guard').read_text()
                          .replace('/etc/init.d/netbird',str(self.bin/'netbird-service'))
+                         .replace('/var/run/xtlspro-netbird',str(self.run))
                          .replace('sleep 30','exit 0'))
         for enabled,pid_rc,should_start in [('1','1',True),('1','0',False),('0','1',False)]:
             calls=self.r/'guard-calls';calls.unlink(missing_ok=True)
@@ -380,6 +402,41 @@ esac
             log=calls.read_text() if calls.exists() else ''
             self.assertEqual('start' in log,should_start)
 
+
+
+    def test_update_launcher_respects_application_lock(self):
+        import fcntl
+        launcher=self.r/'update-launcher'
+        launcher.write_text((FILES/'usr/bin/xray-lab-netbird').read_text()
+            .replace('/var/run/xtlspro-netbird',str(self.run))
+            .replace('/var/run/xray-lab-control',str(self.r/'app-run'))
+            .replace('/usr/share/xray/lab/netbird.uc',str(self.script))
+            .replace('ucode "$LIB"','ucode -L '+str(self.modules)+' "$LIB"'))
+        launcher.chmod(0o755);(self.r/'app-run').mkdir()
+        with (self.r/'app-run/action.lock').open('w') as lock:
+            fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            r=subprocess.run([str(launcher),'launch','update'],input='{}',env=self.env,capture_output=True,text=True)
+            self.assertIn('error',json.loads(r.stdout));self.assertFalse((self.run/'job.json').exists())
+
+    def test_check_update_uses_repository_without_changing_connection(self):
+        (self.r/'connected').touch();self.stage('check_update');r=self.worker('check_update')
+        self.assertEqual(r.returncode,0,r.stderr+str(self.job()))
+        c=json.loads((self.run/'catalog.json').read_text());self.assertTrue(c['update_available']);self.assertEqual(c['available'],'0.80.0-r1')
+        self.assertFalse(any(x[:2]==['netbird','down'] for x in self.calls()))
+    def test_update_retains_registration_connection_and_autostart(self):
+        (self.r/'connected').touch();(self.r/'enabled').touch();self.stage('update');r=self.worker('update')
+        self.assertEqual(r.returncode,0,r.stderr+str(self.job()));self.assertTrue((self.r/'connected').exists());self.assertTrue((self.r/'enabled').exists())
+        a=next(x for x in self.calls() if x[:3]==['apk','add','--upgrade']);self.assertEqual(a[-1],'netbird=0.80.0-r1');self.assertNotIn('--allow-untrusted',a)
+        self.assertFalse(any(x[:2]==['netbird','down'] for x in self.calls()))
+    def test_update_memory_guard_and_signature_failure_do_not_logout(self):
+        for mode in ['memory','bad-signature']:
+            with self.subTest(mode=mode):
+                (self.r/'connected').touch();self.stage('update')
+                (self.r/'meminfo').write_text('MemAvailable: '+('20000' if mode=='memory' else '50000')+' kB\n')
+                r=self.worker('update',scenario=mode);self.assertNotEqual(r.returncode,0);self.assertTrue((self.r/'connected').exists());self.assertFalse((self.r/'upgraded').exists())
+    def test_update_reports_missing_reconnection_without_claiming_success(self):
+        (self.r/'connected').touch();self.stage('update');r=self.worker('update',scenario='no-reconnect')
+        self.assertNotEqual(r.returncode,0);self.assertIn('подключение не подтвердилось',self.job()['message'])
 
 if __name__=='__main__':
     unittest.main()

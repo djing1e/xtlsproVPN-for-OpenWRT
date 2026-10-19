@@ -2,6 +2,7 @@
 import * as fs from 'fs';
 import { cursor } from 'uci';
 import { operation_lock, config, snapshot, save, load, run_dir, uptime, capture, health_check, latencies, diagnose, job, redacted_logs } from './state.mjs';
+import { selection_event } from './selection_events.mjs';
 import { decide } from './watchdog.uc';
 
 const action=ARGV[0] || 'status';
@@ -66,6 +67,14 @@ case 'watch-step': {
     if ((r.state.outages || 0)>old_outages) r.state.outage_at=time();
     r.state.reason=r.reason; r.state.checked=time(); r.state.enabled=g.fx_watchdog_enabled=='1';
     save(run_dir+'/watchdog.json',r.state);
+    const history=load(run_dir+'/selection-events.json') || {events:[]};
+    const selection=selection_event(history.current,s,time(),r.reason);
+    if (!history.current || selection.event) {
+        history.current=selection.current;
+        if (selection.event) push(history.events,selection.event);
+        if (length(history.events)>40) splice(history.events,0,length(history.events)-40);
+        save(run_dir+'/selection-events.json',history);
+    }
     if (r.action) print(r.action+'\n');
     exit(0);
 }

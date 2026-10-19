@@ -32,6 +32,7 @@ return baseclass.extend({
             const summary = E('p', {role: 'status', 'aria-live': 'polite'});
             const message = E('p', {role: 'status', 'aria-live': 'polite'});
             const resources = E('p', {style: 'opacity:.75'});
+            const versions = E('p', {role: 'status'});
             const buttons = {};
 
             function refresh(data) {
@@ -41,13 +42,19 @@ return baseclass.extend({
                 summary.textContent = !data.installed ? 'NetBird не установлен.' :
                     data.connected ? 'Подключён · ' + data.netbird_ip + (data.version ? ' · ' + data.version : '') :
                     'NetBird установлен, соединение с сервером управления не установлено.';
-                if (data.job.message) message.textContent = data.job.message;
+                summary.style.color = data.connected ? '#00b991' : '';
+                const pkg=data.package || {};
+                versions.textContent='Пакет OpenWrt: '+(pkg.installed || 'не определён')+
+                    (pkg.available ? ' · В репозитории: '+pkg.available+(pkg.update_available?' · доступно обновление':' · обновление не требуется') : ' · нажмите «Проверить обновления»');
+                message.textContent = data.job.message || '';
                 message.style.color = data.job.state === 'failed' ? '#c0392b' : '';
                 resources.textContent = data.installed ?
                     'Бинарник: ' + (data.resources.binary_bytes / 1048576).toFixed(1) + ' МиБ · RAM процесса: ' +
                     (data.resources.rss_bytes / 1048576).toFixed(1) + ' МиБ · Автозапуск: ' +
                     (data.enabled ? 'включён' : 'выключен') : '';
                 buttons.install.disabled = busy || data.installed;
+                buttons.check_update.disabled = busy || !data.installed;
+                buttons.update.disabled = busy || !data.installed || !data.package?.update_available;
                 buttons.connect.disabled = busy || !data.installed;
                 buttons.disconnect.disabled = busy || !data.installed;
                 url.disabled = hostname.disabled = key.disabled = busy;
@@ -85,11 +92,11 @@ return baseclass.extend({
                     message.style.color = '#c0392b';
                 });
             }
-            ['install', 'connect', 'disconnect'].forEach(function(name) {
+            ['install', 'connect', 'disconnect', 'check_update', 'update'].forEach(function(name) {
                 buttons[name] = E('button', {
                     type: 'button', 'class': 'cbi-button ' + (name === 'connect' ? 'cbi-button-apply' : 'cbi-button-action'),
                     click: function() { action(name); }
-                }, {install: 'Установить NetBird', connect: 'Подключить / применить', disconnect: 'Отключить'}[name]);
+                }, {install: 'Установить NetBird', connect: 'Подключить / применить', disconnect: 'Отключить', check_update: 'Проверить обновления', update: 'Обновить NetBird'}[name]);
             });
             function row(label, input, description) {
                 return E('div', {'class': 'cbi-value'}, [
@@ -101,19 +108,21 @@ return baseclass.extend({
             refresh(initial);
             poll.add(function() {
                 return getStatus().then(refresh).catch(function(error) {
+                    summary.style.color = '';
                     summary.textContent = 'Статус NetBird недоступен: ' + (error.message || String(error));
                 });
             }, 10);
             return E('div', {'class': 'cbi-map'}, [
                 E('h2', {}, 'Административный доступ · NetBird'),
                 E('p', {}, 'Постоянное подключение к вашему self-hosted серверу. После настройки запускается автоматически, независимо от службы Xray.'),
-                summary, resources,
+                summary, resources, versions,
                 row('Сервер управления', url, 'HTTPS-адрес вашего NetBird Management Server.'),
                 row('Имя устройства', hostname, 'Латинские буквы, цифры и дефис. Можно оставить пустым.'),
                 row('Setup key', key, 'Для регистрации устройства. При повторном подключении зарегистрированного устройства можно оставить пустым. В настройках xtlsproVPN ключ не сохраняется.'),
                 E('div', {style: 'display:flex;flex-wrap:wrap;gap:8px;margin-top:14px'},
-                    [buttons.install, buttons.connect, buttons.disconnect]),
+                    [buttons.install, buttons.connect, buttons.disconnect, buttons.check_update, buttons.update]),
                 message,
+                E('p', {style: 'opacity:.8'}, 'NetBird обновляется отдельно из подписанного репозитория OpenWrt. На время обновления административное соединение может прерваться; регистрация сохраняется. Новая версия upstream появится здесь после её включения в репозиторий OpenWrt.'),
                 E('p', {style: 'margin-top:12px;opacity:.8'}, 'В новой зоне firewall открываются только TCP 22, 80 и 443 к самому роутеру. Существующая зона wt0 сохраняется. Доступ к домашней сети не добавляется. NetBird не управляет DNS и маршрутами подсетей.'),
                 E('p', {style: 'opacity:.8'}, 'Используются обычные SSH и LuCI с их авторизацией. Группы администраторов и правила доступа настройте на сервере NetBird.')
             ]);
