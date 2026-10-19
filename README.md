@@ -1,10 +1,10 @@
 # xtlsproVPN для OpenWrt
 
-Актуальный релиз **v1.1.2**, пакет **1.1.2-r2**. Управление подпиской, ядром Xray,
+Актуальный релиз **v1.2.0**, пакет **1.2.0-r3**. Управление подпиской, ядром Xray,
 прозрачным IPv4-прокси, DNS и маршрутизацией через LuCI.
 
-[Скачать текущий релиз](https://github.com/djing1e/xtlsproVPN-for-OpenWRT/releases/tag/v1.1.2)
-· [Описание релиза](docs/releases/v1.1.2.md)
+[Скачать текущий релиз](https://github.com/djing1e/xtlsproVPN-for-OpenWRT/releases/tag/v1.2.0)
+· [Описание релиза](docs/releases/v1.2.0.md)
 · [Протокол аппаратных проверок](docs/lab-validation-2026-10-16.md)
 · [NetBird](docs/netbird-admin.md)
 
@@ -152,3 +152,7 @@ NetBird: последовательные проверки используют 
 Xray занял 25 560 КиБ RSS/HWM. HTTPS, DNS UDP/TCP с TTL 60 и NetBird сохранили
 работоспособность; диагностика LuCI — 26/26 без ошибок.
 [Подробности проверки памяти](docs/low-memory-subscription.md).
+
+В v1.2.0 добавлены переключение серверов через API без перезапуска Xray,
+скрытие сохранённой ссылки подписки в форме, зелёный статус NetBird и обновления
+его пакета из репозитория OpenWrt. [Описание и результаты проверок](docs/releases/v1.2.0.md).
