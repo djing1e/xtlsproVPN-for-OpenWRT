@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Promote the exact tested r3 artifact after successful build; never rebuild the APK.
+# Promote the exact tested r4 artifact after successful build; never rebuild the APK.
 set -euo pipefail
 repo=${GITHUB_REPOSITORY:?}
 [[ "$repo" == djing1e/xtlsproVPN-for-OpenWRT ]] || exit 1
-run=39292504806
-release_commit=0227881db1a729ae9e9d7b0584b1d2538d1cab1a
+run=39296366884
+release_commit=f5c77c5d39e06968ba88c259bc8111713dc1716b
 tag=v1.3.0
-apk_name=xtlsprovpn-1.3.0-r3.apk
+apk_name=xtlsprovpn-1.3.0-r4.apk
 work=$(mktemp -d "${RUNNER_TEMP:-/tmp}/xtls-ui-release.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 
@@ -34,7 +34,7 @@ with zipfile.ZipFile(sys.argv[1]) as z:
     assert sum(x.file_size for x in z.infolist())<10485760
     z.extractall(sys.argv[2])
     m=json.loads(z.read('update.json'));data=z.read(sys.argv[3]);sha=hashlib.sha256(data).hexdigest()
-    assert m['schema']==1 and m['version']=='1.3.0-r3' and m['tag']=='v1.3.0'
+    assert m['schema']==1 and m['version']=='1.3.0-r4' and m['tag']=='v1.3.0'
     assert m['openwrt']==['25.12.5'] and m['architectures']==['aarch64']
     assert m['apk']=={'name':sys.argv[3],'size':len(data),'sha256':sha}
     assert z.read('SHA256SUMS').decode().strip()==sha+'  ./'+sys.argv[3]
@@ -52,7 +52,7 @@ PY
     [[ "$draft" != false ]] || already_published=1
 else
     gh release create "$tag" --repo "$repo" --draft --target "$release_commit" \
-        --title 'xtlsproVPN v1.3.0 (r3)' --notes-file docs/releases/v1.3.0.md
+        --title 'xtlsproVPN v1.3.0 (r4)' --notes-file docs/releases/v1.3.0.md
 fi
 if [[ "$already_published" == 0 ]]; then
     gh release upload "$tag" --repo "$repo" --clobber \

@@ -24,8 +24,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Verify package source matches tested r3 build
-        run: git diff --exit-code 0227881db1a729ae9e9d7b0584b1d2538d1cab1a HEAD -- package/xtlsprovpn
+      - name: Verify package source matches tested r4 build
+        run: git diff --exit-code f5c77c5d39e06968ba88c259bc8111713dc1716b HEAD -- package/xtlsprovpn
       - name: Verify exact APK and prepare draft or publish
         env:
           GH_TOKEN: ${{ github.token }}
