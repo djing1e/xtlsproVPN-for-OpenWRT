@@ -45,6 +45,7 @@ elif n=='netbird-service':sys.exit(1 if scenario=='nb-disabled' else 0)
 elif n=='dropbearkey':
  if '-t' in a:Path(a[a.index('-f')+1]).write_text('private-key-must-never-escape');Path(a[a.index('-f')+1]).chmod(0o600)
  else:print('Public key portion is:\\n'+os.environ['PUBKEY'])
+elif n=='dbclient':(r/'client-home-present').write_text(str('HOME' in os.environ))
 elif n=='tunnel':
  if a==['start']:
   if scenario=='reject':sys.exit(1)
@@ -133,6 +134,7 @@ class Controller(unittest.TestCase):
         runner=self.r/'runner';runner.write_text((FILES/'usr/bin/xray-rescue-tunnel').read_text().replace('/var/run/xtlspro-rescue',str(self.run)))
         r=subprocess.run(['sh',str(runner)],env=self.env,capture_output=True,text=True,timeout=5)
         self.assertEqual(r.returncode,0,r.stderr)
+        self.assertEqual((self.r/'client-home-present').read_text(),'False')
         calls=[json.loads(x) for x in (self.r/'calls').read_text().splitlines()]
         args=next(x for x in calls if x[0]=='dbclient')
         self.assertIn('xtls-rescue@192.0.2.10',args);self.assertIn('127.0.0.1:22001:127.0.0.1:222',args)
