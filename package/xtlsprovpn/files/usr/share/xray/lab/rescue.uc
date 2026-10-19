@@ -112,7 +112,7 @@ function tick(){
     next.checked=time();
     if(next.action=='start'){
         save(next);
-        try{plan(cfg);if(!capture([SERVICE,'start'],8).ok)die('Служба туннеля не запустилась');next.error=null;}
+        try{plan(cfg);if(!capture([SERVICE,'start','policy'],8).ok)die('Служба туннеля не запустилась');next.error=null;}
         catch(e){next.reason='start_failed';next.error=trim(''+e);}
     } else if(next.action=='stop')capture([SERVICE,'stop'],8);
     if(previous_reason!=next.reason)capture(['logger','-t','xray-rescue','Emergency SSH: '+next.reason],2);

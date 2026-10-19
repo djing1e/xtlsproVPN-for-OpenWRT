@@ -48,7 +48,7 @@ elif n=='dropbearkey':
  else:print('Public key portion is:\\n'+os.environ['PUBKEY'])
 elif n=='dbclient':(r/'client-home-present').write_text(str('HOME' in os.environ))
 elif n=='tunnel':
- if a==['start']:
+ if a==['start','policy']:
   if scenario=='reject':sys.exit(1)
   (r/'running').touch()
  elif a==['stop']:(r/'running').unlink(missing_ok=True)
@@ -155,5 +155,28 @@ class Controller(unittest.TestCase):
         calls=[json.loads(x) for x in (self.r/'calls').read_text().splitlines()]
         args=next(x for x in calls if x[0]=='dbclient')
         self.assertIn('xtls-rescue@192.0.2.10',args);self.assertIn('127.0.0.1:22001:127.0.0.1:222',args)
+
+    def test_package_start_cannot_launch_stale_tunnel_command(self):
+        self.call();self.call(p={'action':'open'})
+        init=self.r/'init';init.write_text((FILES/'etc/init.d/xray_rescue_tunnel').read_text().replace('/var/run/xtlspro-rescue',str(self.run)))
+        script='''
+set -eu
+init=$1
+shift
+action=start
+. "$init"
+procd_open_instance() { echo open; }
+procd_set_param() { echo "$*"; }
+procd_close_instance() { echo close; }
+if [ "${USE_PROCD:-}" = 1 ]; then
+ echo procd-open-service
+ start_service "$@"
+fi
+'''
+        for args in [[],['policy']]:
+            r=subprocess.run(['sh','-c',script,'test',str(init),*args],capture_output=True,text=True)
+            self.assertEqual(r.returncode,0,r.stderr)
+            if args:self.assertIn('command /usr/bin/xray-rescue-tunnel',r.stdout)
+            else:self.assertEqual(r.stdout,'')
 
 if __name__=='__main__':unittest.main()
