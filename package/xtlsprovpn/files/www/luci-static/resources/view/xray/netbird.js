@@ -2,6 +2,7 @@
 'require baseclass';
 'require rpc';
 'require poll';
+'require view.xray.rescue as rescue';
 
 const getStatus = rpc.declare({object: 'xray_lab_netbird', method: 'status'});
 const runAction = rpc.declare({
@@ -11,7 +12,8 @@ const runAction = rpc.declare({
 
 return baseclass.extend({
     render: function() {
-        return getStatus().then(function(initial) {
+        return Promise.all([getStatus(),rescue.render()]).then(function(parts) {
+            const initial=parts[0], rescuePanel=parts[1];
             if (initial.error) throw new Error(initial.error);
             let submitting = false, current = initial;
             const url = E('input', {
@@ -33,6 +35,7 @@ return baseclass.extend({
             const message = E('p', {role: 'status', 'aria-live': 'polite'});
             const resources = E('p', {style: 'opacity:.75'});
             const versions = E('p', {role: 'status'});
+            const guard = E('p', {role: 'status'});
             const buttons = {};
 
             function refresh(data) {
@@ -48,6 +51,18 @@ return baseclass.extend({
                     (pkg.available ? ' · В репозитории: '+pkg.available+(pkg.update_available?' · доступно обновление':' · обновление не требуется') : ' · нажмите «Проверить обновления»');
                 message.textContent = data.job.message || '';
                 message.style.color = data.job.state === 'failed' ? '#c0392b' : '';
+                const reasons = {
+                    healthy: 'соединение исправно', startup_grace: 'ожидание после запуска',
+                    settling: 'ожидание после восстановления', confirming_failure: 'подтверждение сбоя',
+                    waiting_uplink: 'ожидание доступа в интернет', management_unavailable: 'сервер управления недоступен',
+                    manual_down: 'подключение остановлено вручную', authentication_required: 'нужна повторная авторизация',
+                    paused: 'наблюдение приостановлено', recovering: 'восстановление службы',
+                    cooldown: 'пауза перед повторной попыткой', rate_limited: 'достигнут лимит попыток за час',
+                    not_checked: 'проверка ещё не выполнена'
+                };
+                guard.textContent = !data.installed ? '' : 'Guard: ' +
+                    (!data.enabled ? reasons.paused : reasons[data.guard?.reason] || reasons.not_checked) +
+                    ' · попыток за час: ' + (data.guard?.attempts?.length || 0);
                 resources.textContent = data.installed ?
                     'Бинарник: ' + (data.resources.binary_bytes / 1048576).toFixed(1) + ' МиБ · RAM процесса: ' +
                     (data.resources.rss_bytes / 1048576).toFixed(1) + ' МиБ · Автозапуск: ' +
@@ -115,7 +130,7 @@ return baseclass.extend({
             return E('div', {'class': 'cbi-map'}, [
                 E('h2', {}, 'Административный доступ · NetBird'),
                 E('p', {}, 'Постоянное подключение к вашему self-hosted серверу. После настройки запускается автоматически, независимо от службы Xray.'),
-                summary, resources, versions,
+                summary, resources, versions, guard,
                 row('Сервер управления', url, 'HTTPS-адрес вашего NetBird Management Server.'),
                 row('Имя устройства', hostname, 'Латинские буквы, цифры и дефис. Можно оставить пустым.'),
                 row('Setup key', key, 'Для регистрации устройства. При повторном подключении зарегистрированного устройства можно оставить пустым. В настройках xtlsproVPN ключ не сохраняется.'),
@@ -124,7 +139,8 @@ return baseclass.extend({
                 message,
                 E('p', {style: 'opacity:.8'}, 'NetBird обновляется отдельно из подписанного репозитория OpenWrt. На время обновления административное соединение может прерваться; регистрация сохраняется. Новая версия upstream появится здесь после её включения в репозиторий OpenWrt.'),
                 E('p', {style: 'margin-top:12px;opacity:.8'}, 'В новой зоне firewall открываются только TCP 22, 80 и 443 к самому роутеру. Существующая зона wt0 сохраняется. Доступ к домашней сети не добавляется. NetBird не управляет DNS и маршрутами подсетей.'),
-                E('p', {style: 'opacity:.8'}, 'Используются обычные SSH и LuCI с их авторизацией. Группы администраторов и правила доступа настройте на сервере NetBird.')
+                E('p', {style: 'opacity:.8'}, 'Используются обычные SSH и LuCI с их авторизацией. Группы администраторов и правила доступа настройте на сервере NetBird.'),
+                rescuePanel
             ]);
         }).catch(function(error) {
             return E('div', {'class': 'alert-message warning'}, 'Не удалось загрузить NetBird: ' + (error.message || String(error)));

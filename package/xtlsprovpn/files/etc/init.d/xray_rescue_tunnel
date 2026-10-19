@@ -1,0 +1,24 @@
+#!/bin/sh /etc/rc.common
+START=99
+STOP=10
+# rc.common sources this file before selecting its procd implementation.
+# Return before USE_PROCD so an unsolicited start cannot submit an empty
+# service definition that stops an already active emergency session either.
+case "${action:-}" in
+    start) [ "${1:-}" = policy ] || return 0 ;;
+    boot|restart|reload) return 0 ;;
+esac
+USE_PROCD=1
+start_service() {
+    # OpenWrt starts every packaged init script after installation/upgrade.
+    # Only the controller may launch this on-demand service.
+    [ "${1:-}" = policy ] || return 0
+    [ -s /var/run/xtlspro-rescue/command.sh ] || return 1
+    procd_open_instance
+    procd_set_param command /usr/bin/xray-rescue-tunnel
+    # The watch policy owns backoff; procd must not retry on its own.
+    procd_set_param stdout 1
+    procd_set_param stderr 1
+    procd_set_param term_timeout 5
+    procd_close_instance
+}

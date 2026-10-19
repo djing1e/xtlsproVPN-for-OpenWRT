@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+# This private file is produced only by the validated controller, never an RPC payload.
+. /var/run/xtlspro-rescue/command.sh
+# procd may inherit HOME=/; let Dropbear resolve root's home through getpwuid().
+# The controller pins the server key in /root/.ssh/known_hosts.
+unset HOME
+exec "$@"

@@ -1,7 +1,25 @@
 {
   "luci-app-xray-netbird": {
     "description": "Configure self-hosted NetBird administrative access",
-    "read": {"ubus": {"xray_lab_netbird": ["status"]}},
-    "write": {"ubus": {"xray_lab_netbird": ["action"]}}
+    "read": {
+      "ubus": {
+        "xray_lab_netbird": [
+          "status"
+        ],
+        "xray_lab_rescue": [
+          "status"
+        ]
+      }
+    },
+    "write": {
+      "ubus": {
+        "xray_lab_netbird": [
+          "action"
+        ],
+        "xray_lab_rescue": [
+          "action"
+        ]
+      }
+    }
   }
 }

@@ -15,7 +15,16 @@ case "$ua" in Happ|xtlspro) uci set forkop_xray.main.user_agent='' ;; esac
 uci commit forkop_xray
 # Boot recovery and one-arm gateway protection never start the proxy.
 /etc/init.d/xray_lab_recovery enable || :
+# Reload only our supervisor after upgrades; do not reconnect or restart NetBird.
+if [ "$(uci -q get xray_lab_netbird.main.enabled)" = 1 ]; then
+    /etc/init.d/xray_netbird_guard enable || :
+    /etc/init.d/xray_netbird_guard restart || :
+fi
 # Registration only: no core, firewall, DNS or LAN changes on installation.
 /etc/init.d/rpcd reload || :
+if [ "$(uci -q get xray_lab_rescue.main.enabled)" = 1 ]; then
+    /etc/init.d/xray_rescue_watch enable || :
+    /etc/init.d/xray_rescue_watch restart || :
+fi
 rm -f /tmp/luci-indexcache /tmp/luci-indexcache.*
 exit 0

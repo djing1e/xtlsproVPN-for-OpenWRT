@@ -379,30 +379,29 @@ class NetBird(unittest.TestCase):
         self.assertNotIn(KEY,result.stdout+result.stderr+json.dumps(self.calls()))
         self.assertEqual((self.r/'key-hash').read_text(),hashlib.sha256(KEY.encode()).hexdigest())
 
-    def test_guard_only_recovers_missing_daemon_when_enabled(self):
-        mock="""#!/bin/sh
-case "${0##*/}" in
-uci) echo "$TEST_ENABLED" ;;
-pidof) exit "$TEST_PID_RC" ;;
-netbird-service) echo "$*" >> "$TEST_CALLS" ;;
-esac
-"""
-        for name in ['uci','pidof','netbird-service']:
-            path=self.bin/name;path.write_text(mock);path.chmod(0o755)
+    def test_guard_serializes_worker_with_netbird_and_application_jobs(self):
+        import fcntl
+        for name in ['uci','ucode']:
+            p=self.bin/name
+            p.write_text('#!/bin/sh\n' + ('echo "$TEST_ENABLED"\n' if name=='uci' else 'echo worker >> "$TEST_CALLS"\n'))
+            p.chmod(0o755)
+        app=self.r/'app';app.mkdir()
         guard=self.r/'watch.sh'
         guard.write_text((FILES/'usr/bin/xray-netbird-guard').read_text()
-                         .replace('/etc/init.d/netbird',str(self.bin/'netbird-service'))
-                         .replace('/var/run/xtlspro-netbird',str(self.run))
-                         .replace('sleep 30','exit 0'))
-        for enabled,pid_rc,should_start in [('1','1',True),('1','0',False),('0','1',False)]:
+            .replace('/var/run/xtlspro-netbird',str(self.run))
+            .replace('/var/run/xray-lab-control',str(app)).replace('sleep 30','exit 0'))
+        for enabled,locked,expected in [('1',None,True),('0',None,False),
+            ('1',self.run/'action.lock',False),('1',app/'action.lock',False)]:
             calls=self.r/'guard-calls';calls.unlink(missing_ok=True)
-            r=subprocess.run(['sh',str(guard)],env=dict(self.env,TEST_ENABLED=enabled,
-                             TEST_PID_RC=pid_rc,TEST_CALLS=str(calls)),capture_output=True,text=True)
-            self.assertEqual(r.returncode,0,r.stderr)
-            log=calls.read_text() if calls.exists() else ''
-            self.assertEqual('start' in log,should_start)
-
-
+            handle=locked.open('w') if locked else None
+            try:
+                if handle:fcntl.flock(handle,fcntl.LOCK_EX|fcntl.LOCK_NB)
+                r=subprocess.run(['sh',str(guard)],env=dict(self.env,TEST_ENABLED=enabled,
+                    TEST_CALLS=str(calls)),capture_output=True,text=True,timeout=5)
+                self.assertEqual(r.returncode,0,r.stderr)
+                self.assertEqual(calls.exists(),expected)
+            finally:
+                if handle:handle.close()
 
     def test_update_launcher_respects_application_lock(self):
         import fcntl

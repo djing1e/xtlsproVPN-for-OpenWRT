@@ -1,16 +1,19 @@
 #!/bin/sh
-# The OpenWrt NetBird init script does not always set procd respawn.
-# Never treat an unavailable uplink as a reason to restart the daemon.
+umask 077
+RUN=/var/run/xtlspro-netbird
+mkdir -p "$RUN"
+chmod 700 "$RUN"
 while :; do
     [ "$(uci -q get xray_lab_netbird.main.enabled)" = 1 ] || exit 0
-    if /etc/init.d/netbird enabled >/dev/null 2>&1 &&
-        ! pidof netbird >/dev/null 2>&1; then
-        mkdir -p /var/run/xtlspro-netbird
-        (
-            exec 9>/var/run/xtlspro-netbird/action.lock
-            flock -n 9 || exit 0
-            /etc/init.d/netbird start >/dev/null 2>&1 || :
-        )
-    fi
+    (
+        # Same lock order as package operations. No overlap with connect/update,
+        # subscription application or firewall recovery.
+        exec 9>"$RUN/action.lock"
+        flock -n 9 || exit 0
+        mkdir -p /var/run/xray-lab-control
+        exec 8>/var/run/xray-lab-control/action.lock
+        flock -n 8 || exit 0
+        timeout -k 2 55 ucode /usr/share/xray/lab/netbird_guard.uc || :
+    )
     sleep 30
 done

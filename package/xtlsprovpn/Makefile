@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 PKG_NAME:=xtlsprovpn
-PKG_VERSION:=1.2.0
-PKG_RELEASE:=3
+PKG_VERSION:=1.3.0
+PKG_RELEASE:=4
 PKG_LICENSE:=GPL-2.0-or-later MPL-2.0
 PKG_MAINTAINER:=xtlsproVPN
 include $(INCLUDE_DIR)/package.mk
@@ -29,11 +29,14 @@ define Package/xtlsprovpn/conffiles
 /etc/config/xray_lab_core
 /etc/config/xray_lab_schedule
 /etc/config/xray_lab_netbird
+/etc/config/xray_lab_rescue
 endef
 
 define Package/xtlsprovpn/install
 	$(INSTALL_DIR) $(1)
 	$(CP) ./files/. $(1)/
+	$(INSTALL_DIR) $(1)/etc/xtlspro-rescue
+	chmod 700 $(1)/etc/xtlspro-rescue
 	# Install executable entry points explicitly; never inherit a lost Git mode.
 	$(INSTALL_BIN) ./files/etc/init.d/* $(1)/etc/init.d/
 	$(INSTALL_BIN) ./files/etc/uci-defaults/* $(1)/etc/uci-defaults/
