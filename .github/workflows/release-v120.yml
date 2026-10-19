@@ -1,0 +1,33 @@
+name: Publish v1.2.0 router administration update
+on:
+  push:
+    branches: ['main']
+    paths:
+      - '.github/workflows/release-v120.yml'
+      - 'scripts/publish-v120.sh'
+      - 'docs/releases/v1.2.0.md'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: publish-v120
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify package source matches corrected build
+        run: git diff --exit-code b6f7ed179bd5069f075944d98c8b46debada69fd HEAD -- package/xtlsprovpn
+      - name: Wait for corrected APK, verify and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/publish-v120.sh
+
