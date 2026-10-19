@@ -30,7 +30,7 @@ export function roscom_features(i, config) {
     const endpoints = uniq(map(filter(i.outbounds, o=>index(o.tag || '', 'fx_node:')==0), o=>'full:'+o.settings.vnext[0].address));
     // Independent node probes and API always precede user policy.
     let rules = filter(i.routing.rules, r=>length(r.inboundTag || [])==1 &&
-        (r.inboundTag[0]=='api' || index(r.inboundTag[0],'fx_probe:')==0));
+        (r.inboundTag[0]=='api' || r.inboundTag[0]=='fx_auto_dispatch' || index(r.inboundTag[0],'fx_probe:')==0));
     const add = r => push(rules, {type:'field',...r});
     add({inboundTag:['dns_conf_inbound'],ip:['1.1.1.1','77.88.8.8'],outboundTag:'direct'});
     add({inboundTag:['dns_conf_inbound'],balancerTag:'fx_main'});

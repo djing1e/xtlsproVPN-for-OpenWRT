@@ -66,6 +66,14 @@ worker)
         cp -p /etc/config/xray_core "$CHECK/previous"
         ucode "$UC" stage "$CHECK" "$location"
         XRAY_UCI_CONFIG_DIR="$CHECK" ucode /usr/share/xray/gen_config.uc > "$CHECK/config.json"
+        running=0
+        /etc/init.d/xray_core running >/dev/null 2>&1 && running=1
+        if [ "$op" = select ] && [ "$running" = 1 ]; then
+            # The helper permits only selection changes against the running config.
+            # No second Xray/geo database load is needed for an API override.
+            ucode /usr/share/xray/lab/select_live.uc "$CHECK" "$location"
+            exit $?
+        fi
         XRAY_LOCATION_ASSET=/usr/share/xray GOMEMLIMIT=128MiB /usr/libexec/forkop-xray/xray run -test -c "$CHECK/config.json"
         printf 'table inet xray_lab_check {\n' > "$CHECK/firewall.nft"
         XRAY_UCI_CONFIG_DIR="$CHECK" utpl /usr/share/xray/firewall_include.ut >> "$CHECK/firewall.nft"

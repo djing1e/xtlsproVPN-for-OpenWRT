@@ -5,7 +5,12 @@ while :; do
     [ "$(uci -q get xray_lab_netbird.main.enabled)" = 1 ] || exit 0
     if /etc/init.d/netbird enabled >/dev/null 2>&1 &&
         ! pidof netbird >/dev/null 2>&1; then
-        /etc/init.d/netbird start >/dev/null 2>&1 || :
+        mkdir -p /var/run/xtlspro-netbird
+        (
+            exec 9>/var/run/xtlspro-netbird/action.lock
+            flock -n 9 || exit 0
+            /etc/init.d/netbird start >/dev/null 2>&1 || :
+        )
     fi
     sleep 30
 done

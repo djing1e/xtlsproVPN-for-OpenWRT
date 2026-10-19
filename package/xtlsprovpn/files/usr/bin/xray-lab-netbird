@@ -10,18 +10,23 @@ action=${2:-}
 case "$mode" in
 status) exec ucode "$LIB" status ;;
 launch)
-    case "$action" in install|connect|disconnect) ;; *) exit 2 ;; esac
+    case "$action" in install|connect|disconnect|check_update|update) ;; *) exit 2 ;; esac
     exec 9>"$RUN/action.lock"
     if ! flock -n 9; then
         echo '{"error":"Операция NetBird уже выполняется"}'
         exit 0
     fi
+    case "$action" in install|update|check_update)
+        mkdir -p /var/run/xray-lab-control
+        exec 8>/var/run/xray-lab-control/action.lock
+        if ! flock -n 8; then echo '{"error":"Другая операция приложения уже выполняется"}'; exit 0; fi
+        ;; esac
     if ! ucode "$LIB" stage "$action"; then exit 0; fi
     (trap '' HUP; exec "$0" worker "$action") </dev/null >/dev/null 2>&1 &
     echo '{"ok":true}'
     ;;
 worker)
-    case "$action" in install|connect|disconnect) ;; *) exit 2 ;; esac
+    case "$action" in install|connect|disconnect|check_update|update) ;; *) exit 2 ;; esac
     exec ucode "$LIB" worker "$action"
     ;;
 *) exit 2 ;;

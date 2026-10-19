@@ -101,3 +101,8 @@ Zram остаётся отдельной необязательной настр
 - https://github.com/netbirdio/netbird/blob/v0.66.0/client/cmd/root.go
 - https://github.com/netbirdio/netbird/blob/v0.66.0/client/cmd/up.go
 - https://github.com/openwrt/packages/blob/openwrt-25.12/net/netbird/files/netbird.init
+
+
+В тестовой версии 1.2.0-r1 добавлены проверка и обновление пакета NetBird из
+подписанного репозитория OpenWrt. Обновление перезапускает административный
+туннель. Порядок проверки и ограничения: [admin-updates-and-selection.md](admin-updates-and-selection.md).

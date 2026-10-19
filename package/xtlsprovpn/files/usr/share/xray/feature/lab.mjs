@@ -29,6 +29,12 @@ export function lab_features(i, config) {
     i.routing.balancers = filter(i.routing.balancers, b => index(['tcp_outbound_v4','udp_outbound_v4'],b.tag) < 0);
     push(i.routing.balancers,{tag:'fx_main',selector:map(mode=='auto'?nodes:[location],k=>'fx_node:'+k),
         strategy:{type:mode=='auto'?'leastPing':'random'},fallbackTag:'blackhole_outbound'});
+    // API overrides can always switch back to the full auto pool, including
+    // after a boot in manual mode. Existing links keep their outbound handler.
+    push(i.outbounds,{tag:'fx_auto',protocol:'loopback',settings:{inboundTag:'fx_auto_dispatch'}});
+    push(i.routing.balancers,{tag:'fx_auto_pool',selector:map(nodes,k=>'fx_node:'+k),
+        strategy:{type:'leastPing'},fallbackTag:'blackhole_outbound'});
+    splice(i.routing.rules,0,0,{type:'field',inboundTag:['fx_auto_dispatch'],balancerTag:'fx_auto_pool'});
     i.observatory = {subjectSelector:['fx_node:'],probeUrl:probe,probeInterval:interval+'s',enableConcurrency:true};
     // No metrics/pprof or API endpoint is exposed to the LAN.
     i.metrics = {listen:'127.0.0.1:18889'};

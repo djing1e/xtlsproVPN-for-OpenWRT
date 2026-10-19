@@ -75,6 +75,66 @@ function job() {
     }
     return j;
 }
+function checked(args,seconds,message) {
+    if (!capture(args,seconds).ok) die(message);
+}
+function package_version() {
+    let r=capture(['apk','info','-v','-e','netbird'],5);
+    let m=r.ok?match(trim(r.text),/^netbird-([0-9][A-Za-z0-9._+~-]*)$/):null;
+    return m?.[1] || null;
+}
+function package_catalog(refresh) {
+    if (refresh) checked(['apk','update'],120,'Не удалось обновить подписанный каталог OpenWrt');
+    let installed=package_version(), r=capture(['apk','list','--all','netbird'],15), available=null;
+    if (!r.ok) die('Не удалось получить версии NetBird из репозитория OpenWrt');
+    for (let line in split(r.text,'\n')) {
+        let m=match(line,/^netbird-([0-9][A-Za-z0-9._+~-]*)[[:space:]]/);
+        if (m && (!available || trim(capture(['apk','version','-t',available,m[1]],5).text)=='<')) available=m[1];
+    }
+    if (!available) die('В подписанном каталоге OpenWrt пакет NetBird не найден');
+    let newer=installed && trim(capture(['apk','version','-t',installed,available],5).text)=='<';
+    let c={installed,available,update_available:!!newer,checked:time(),source:'OpenWrt'};
+    save(RUN+'/catalog.json',c);return c;
+}
+function upgrade_package() {
+    if (!fs.stat(BIN) || !fs.stat(SERVICE)) die('Сначала установите NetBird');
+    let c=package_catalog(true);
+    if (!c.update_available) return 'В репозитории OpenWrt обновление NetBird не требуется. Релизы upstream могут отличаться.';
+    let mem=match(fs.readfile('/proc/meminfo') || '',/MemAvailable:[[:space:]]*([0-9]+)/);
+    if (int(mem?.[1] || 0)<32768) die('Для обновления NetBird требуется 32 МиБ доступной RAM');
+    let space=capture(['df','-Pk','/overlay'],5), rows=split(trim(space.text),'\n');
+    let cells=split(trim(rows[length(rows)-1] || ''),/[[:space:]]+/);
+    if (!space.ok || int(cells[3] || 0)<24576) die('Для безопасного обновления NetBird требуется 24 МиБ свободного flash');
+    let before=daemon_status(), enabled=capture([SERVICE,'enabled'],5).ok;
+    let guard_enabled=capture([GUARD,'enabled'],5).ok;
+    // The package owns this state directory; archive it privately without exporting identity to RPC.
+    if (fs.stat('/root/.config/netbird'))
+        checked(['tar','-czf',RUN+'/identity-before-update.tar.gz','-C','/root/.config','netbird'],20,'Не удалось сохранить резервную копию регистрации NetBird');
+    fs.chmod(RUN+'/identity-before-update.tar.gz',0600);
+    checked([GUARD,'stop'],10,'Не удалось приостановить наблюдение NetBird');
+    let failure=null;
+    try {
+        checked(['apk','add','--upgrade','netbird='+c.available],300,'Обновление пакета NetBird не завершилось; регистрация сохранена');
+        if (package_version()!=c.available) die('Версия пакета NetBird после обновления не совпала с выбранной');
+        if (enabled) checked([SERVICE,'enable'],5,'Не удалось сохранить автозапуск NetBird');
+        else checked([SERVICE,'disable'],5,'Не удалось сохранить отключённый автозапуск NetBird');
+        if (before?.management?.connected===true) {
+            checked([SERVICE,'restart'],20,'Не удалось перезапустить NetBird после обновления');
+            let connected=false;
+            for (let n=0;n<20;n++) {
+                let d=daemon_status();
+                if (d?.management?.connected===true && d?.netbirdIp &&
+                    endpoint(d.management.url)==endpoint(before.management.url)) {connected=true;break;}
+                capture(['sleep','3'],4);
+            }
+            if (!connected) die('Пакет NetBird обновлён, но подключение не подтвердилось. Регистрация сохранена; проверьте журнал службы.');
+        } else if (!enabled) capture([SERVICE,'stop'],15);
+    } catch(e) {failure=''+e;}
+    if (guard_enabled) capture([GUARD,'start'],10);
+    if (failure) die(failure);
+    package_catalog(false);
+    return 'NetBird обновлён до '+c.available+'. Регистрация, DNS и маршруты сохранены.';
+}
 function status() {
     let s=settings(), d=daemon_status(), j=job();
     return {installed:!!fs.stat(BIN),enabled:capture([SERVICE,'enabled'],2).ok,
@@ -86,12 +146,10 @@ function status() {
         netbird_ip:d?.netbirdIp || '',fqdn:d?.fqdn || '',
         management_connected:d?.management?.connected===true,
         signal_connected:d?.signal?.connected===true,
+        package:load(RUN+'/catalog.json') || {installed:package_version(),available:null,update_available:false},
         version:d?.daemonVersion || d?.cliVersion || '',resources:resources(),job:j,
         firewall_mode:s.firewall_mode || 'not_configured',
         dns_managed:false,client_routes:false,server_routes:false};
-}
-function checked(args,seconds,message) {
-    if (!capture(args,seconds).ok) die(message);
 }
 function login_failure(result,has_key) {
     let text=lc(result.text || '');
@@ -151,6 +209,8 @@ function access_firewall() {
     return 'managed';
 }
 function perform(action,p) {
+    if (action=='check_update') {package_catalog(true);return 'Каталог NetBird обновлён. Источник — подписанный репозиторий OpenWrt.';}
+    if (action=='update') return upgrade_package();
     if (action=='install') {
         if (fs.stat(BIN)) return 'NetBird уже установлен. Конфигурация не изменялась.';
         checked(['apk','update'],120,'Не удалось обновить список пакетов OpenWrt');
@@ -207,7 +267,7 @@ function perform(action,p) {
 
 let mode=ARGV[0], action=ARGV[1];
 if (mode=='status') {print(sprintf('%J',status()));exit(0);}
-if (index(['install','connect','disconnect'],action)<0) die('Unknown action');
+if (index(['install','connect','disconnect','check_update','update'],action)<0) die('Unknown action');
 if (mode=='stage') {
     try {
         let p=parse(fs.stdin.read(8193) || '{}');

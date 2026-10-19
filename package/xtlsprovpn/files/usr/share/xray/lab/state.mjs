@@ -137,7 +137,10 @@ export function snapshot() {
     const watched=asjson(['ubus','call','network.interface.'+iface,'status']) || {};
     const lan=asjson(['ubus','call','network.interface.lan','status']) || {};
     const bi=pid && metrics ? asjson(['/usr/libexec/forkop-xray/xray','api','bi','--timeout=1','--json','fx_main']) : null;
-    const selected=bi?.balancer?.principleTarget?.tag || bi?.balancer?.principle_target?.tag || [];
+    const override=bi?.balancer?.override?.target;
+    const auto_info=override=='fx_auto'?asjson(['/usr/libexec/forkop-xray/xray','api','bi','--timeout=1','--json','fx_auto_pool']):null;
+    const chosen=auto_info || bi;
+    const selected=override && override!='fx_auto'?[override]:chosen?.balancer?.principleTarget?.tag || chosen?.balancer?.principle_target?.tag || [];
     let nodes=[];
     const manual=load(run_dir+'/latency.json') || {};
     const runtime=load('/var/etc/xray/config.json') || {};
@@ -171,7 +174,7 @@ export function snapshot() {
     } catch(e) {}
     const diagnostic=load(run_dir+'/diagnostics.json') || {};
     const routing=g.fx_routing=='roscomvpn'?(load('/usr/share/xray/roscomvpn/profile.json') || {}):{};
-    return {version:'1.1.2-r2',routing:{profile:g.fx_routing || 'all-proxy',updated:positive_number(routing._router_updated),upstream:positive_number(int(routing.LastUpdated)),geoip_version:match(routing.Geoipurl || '',/@([0-9]{12})\//)?.[1] || null,geosite_version:match(routing.Geositeurl || '',/@([0-9]{12})\//)?.[1] || null},diagnostics_checked:diagnostic.checked || null,diagnostics_summary:{job_id:diagnostic.job_id,errors:length(filter(diagnostic.checks || [],c=>c.state=='error')),pending:length(filter(diagnostic.checks || [],c=>c.state=='pending'))},subscription:subscription(),updates:{lists:list_updated(),subscription:update_history('subscription'),routing:update_history('routing')},time:now,uptime:uptime(),enabled:g.transparent_proxy_enable=='1',
+    return {version:'1.2.0-r1',selection_history:load(run_dir+'/selection-events.json')?.events || [],routing:{profile:g.fx_routing || 'all-proxy',updated:positive_number(routing._router_updated),upstream:positive_number(int(routing.LastUpdated)),geoip_version:match(routing.Geoipurl || '',/@([0-9]{12})\//)?.[1] || null,geosite_version:match(routing.Geositeurl || '',/@([0-9]{12})\//)?.[1] || null},diagnostics_checked:diagnostic.checked || null,diagnostics_summary:{job_id:diagnostic.job_id,errors:length(filter(diagnostic.checks || [],c=>c.state=='error')),pending:length(filter(diagnostic.checks || [],c=>c.state=='pending'))},subscription:subscription(),updates:{lists:list_updated(),subscription:update_history('subscription'),routing:update_history('routing')},time:now,uptime:uptime(),enabled:g.transparent_proxy_enable=='1',
         mode:g.fx_mode || 'manual',location:g.fx_location || '',core:{running:pid!=null,pid:pid || null,version,
             rss:mem('VmRSS',proc),peak:mem('VmHWM',proc)},
         memory:{total:mem('MemTotal',memory),available:mem('MemAvailable',memory)},flow_offloading,

@@ -3,6 +3,7 @@
 'require view.xray.core_update_transfer2 as coreUpdate';
 'require view.xray.dns_panel as dnsSettings';
 'require view.xray.schedule as schedule';
+'require view.xray.subscription as subscriptionPanel';
 'require view';
 'require form';
 'require uci';
@@ -11,7 +12,7 @@
 'require view.xray.routing_panel as routingPanel';
 
 return view.extend({
-    load:function(){return Promise.all([uci.load('xray_core'),uci.load('forkop_xray'),dnsSettings.load()]);},
+    load:function(){return Promise.all([uci.load('xray_core'),dnsSettings.load()]);},
     render:function(initial){
         const map=new form.Map('xray_core','Настройки xtlsproVPN');
         const section=map.section(form.NamedSection,'general','general');
@@ -24,20 +25,7 @@ return view.extend({
         o.nocreate=true;o.multiple=false;o.rmempty=false;
         o=section.option(form.Value,'fx_watch_delay','Задержка после подъёма интерфейса, мс');o.datatype='range(1000,60000)';o.rmempty=false;
         o=section.option(form.Flag,'fx_access_log','Журнал соединений','Выключен по умолчанию. При включении хранится в RAM и сокращается монитором; используйте для диагностики.');o.rmempty=false;
-        const subscription=new form.Map('forkop_xray','Подписка');
-        const sub=subscription.section(form.NamedSection,'main','settings');
-        o=sub.option(form.Value,'subscription_url','URL подписки (HTTPS)');o.password=true;
-        o.validate=(sid,v)=>!v || /^https:\/\/[^\s]+$/i.test(v)?true:'Требуется HTTPS-адрес.';
-        o=sub.option(form.Value,'user_agent','User-Agent');o.placeholder='Xray/версия установленного ядра';
-        o=sub.option(form.Flag,'hwid_enabled','Передавать HWID',
-            'Постоянный идентификатор этого роутера для учёта устройств в подписке.');
-        o.rmempty=false;
-        o.cfgvalue=()=>uci.get('forkop_xray','main','hwid_enabled') ?? (uci.get('forkop_xray','main','hwid')?'1':'0');
-        o=sub.option(form.Value,'hwid','Свой HWID',
-            'Пустое поле — постоянный HWID роутера вида xxxx-xxxx-xxxx-xxxx. Свой HWID имеет приоритет.');
-        o.password=true;o.depends('hwid_enabled','1');
-        o.validate=(sid,v)=>!v || /^[A-Za-z0-9=-]{10,64}$/.test(v)?true:'От 10 до 64 символов: латинские буквы, цифры, = и -.';
-        return Promise.all([map.render(),subscription.render(),schedule.render(),coreUpdate.render(),dnsSettings.render(initial[2]),routingPanel.render(initial[2])]).then(parts=>{
+        return Promise.all([map.render(),subscriptionPanel.render(),schedule.render(),coreUpdate.render(),dnsSettings.render(initial[1]),routingPanel.render(initial[1])]).then(parts=>{
             const content=E('div'), tabs=E('div',{'class':'xt-tabs',role:'tablist','aria-label':'Разделы настроек'});
             const panels=[], controls=[];
             const labels=['Подписка','DNS и сеть','Маршрутизация','Автообновление','Ядро','Дополнительно'];
@@ -61,7 +49,7 @@ return view.extend({
             return E('div',{'class':'xt-settings'},[lab.style(),
                 E('style',{},'.xt-settings{max-width:1100px}.xt-tabs{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}.xt-tabs [aria-selected="true"]{border-color:#00b991;color:#00b991}.xt-settings .cbi-map{margin-top:0}'),
                 E('h2',{},'xtlsproVPN'),tabs,content,
-                E('p',{'class':'fx-muted'},'Подписка и дополнительные параметры сохраняются кнопкой внизу страницы. DNS, маршрутизация, расписание и управление ядром имеют собственные кнопки.')]);
+                E('p',{'class':'fx-muted'},'Дополнительные параметры сохраняются кнопкой внизу страницы. Подписка имеет собственную кнопку сохранения. DNS, маршрутизация, расписание и управление ядром имеют собственные кнопки.')]);
         });
     }
 });

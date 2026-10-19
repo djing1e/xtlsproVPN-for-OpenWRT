@@ -1,0 +1,32 @@
+#!/usr/bin/ucode
+import * as fs from 'fs';
+import { cursor } from 'uci';
+if (ARGV[0]=='list') {
+    print('{"status":{},"save":{"subscription_url":"","user_agent":"","hwid_enabled":"","hwid":""}}');exit(0);
+}
+if (ARGV[0]!='call') exit(1);
+let c=cursor(), s=c.get_all('forkop_xray','main') || {};
+if (ARGV[1]=='status') {
+    // Never send the stored subscription URL to the browser, even masked.
+    printf('%J',{configured:!!s.subscription_url,user_agent:s.user_agent || '',
+        hwid_enabled:s.hwid_enabled ?? (s.hwid?'1':'0'),hwid:s.hwid || ''});exit(0);
+}
+if (ARGV[1]!='save') {print('{"error":"Неизвестная операция"}');exit(0);}
+try {
+    let p=json(fs.stdin.read(8193) || '{}');
+    if (type(p)!='object') die('Недопустимые параметры');
+    let url=p.subscription_url || '', ua=p.user_agent || '', hwid=p.hwid || '';
+    if (type(url)!='string' || length(url)>4096 || (url && !match(url,/^https:\/\/[^[:space:]]+$/)))
+        die('Требуется HTTPS-ссылка подписки');
+    if (type(ua)!='string' || length(ua)>256 || match(ua,/[\r\n]/)) die('Недопустимый User-Agent');
+    if (index(['0','1'],p.hwid_enabled)<0) die('Недопустимый режим HWID');
+    if (type(hwid)!='string' || (hwid && !match(hwid,/^[A-Za-z0-9=-]{10,64}$/))) die('Недопустимый HWID');
+    let lock=fs.open('/var/run/xray-lab-control/action.lock','w',0600);
+    if (!lock || !lock.lock('xn')) die('Другая операция приложения уже выполняется');
+    // Empty input preserves the existing secret; no reveal/read/delete method.
+    if (url) c.set('forkop_xray','main','subscription_url',url);
+    for (let k,v in {user_agent:ua,hwid_enabled:p.hwid_enabled,hwid}) c.set('forkop_xray','main',k,v);
+    if (!c.commit('forkop_xray')) die('Не удалось сохранить подписку');
+    fs.chmod('/etc/config/forkop_xray',0600);
+    print('{"ok":true}');
+} catch(e) {printf('%J',{error:trim(''+e)});}
