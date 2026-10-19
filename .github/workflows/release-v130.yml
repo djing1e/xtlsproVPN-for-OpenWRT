@@ -1,0 +1,33 @@
+name: Prepare or publish v1.3.0 administration recovery release
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish stable release after final HOME package and reboot verification
+        required: true
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: publish-v130
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify package source matches tested r3 build
+        run: git diff --exit-code 0227881db1a729ae9e9d7b0584b1d2538d1cab1a HEAD -- package/xtlsprovpn
+      - name: Verify exact APK and prepare draft or publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISH_RELEASE: ${{ inputs.publish }}
+        run: bash scripts/publish-v130.sh
