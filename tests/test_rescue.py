@@ -41,7 +41,8 @@ if n=='ip':
  if '-j' in a:print(json.dumps([{'dev':'wt0' if scenario=='wrong-route' else 'wan','prefsrc':'192.0.2.2'}]))
  else:print('default via 192.0.2.1 dev wan')
 elif n=='netbird':print(json.dumps({'management':{'connected':scenario=='healthy'},'signal':{'connected':True},'netbirdIp':'100.64.0.1/16','daemonStatus':'Connecting'}))
-elif n=='netbird-service':sys.exit(1 if scenario=='nb-disabled' else 0)
+elif n=='netbird-service':sys.exit(1 if scenario in ['nb-disabled','wrapper'] else 0)
+elif n=='netbird-wrapper-service':sys.exit(0 if scenario=='wrapper' else 1)
 elif n=='dropbearkey':
  if '-t' in a:Path(a[a.index('-f')+1]).write_text('private-key-must-never-escape');Path(a[a.index('-f')+1]).chmod(0o600)
  else:print('Public key portion is:\\n'+os.environ['PUBKEY'])
@@ -67,10 +68,11 @@ class Controller(unittest.TestCase):
         (self.proc/'123/fd/3').symlink_to('socket:[4242]')
         self.uptime=self.r/'uptime';self.uptime.write_text('1000.0 0')
         b=self.r/'bin';b.mkdir();mods=self.r/'modules';mods.mkdir();self.mods=mods;(mods/'uci.uc').write_text(UCI)
-        for name in ['ip','netbird','netbird-service','dropbearkey','dbclient','tunnel','watch','ubus','logger']:
+        for name in ['ip','netbird','netbird-service','netbird-wrapper-service','dropbearkey','dbclient','tunnel','watch','ubus','logger']:
             p=b/name;p.write_text(MOCK);p.chmod(0o755)
         self.cfg=self.r/'uci.json';self.cfg.write_text(json.dumps({'xray_lab_rescue':{'main':{'enabled':'0'}},'xray_lab_dns':{'main':{'output_enabled':'0'}}}))
         src=(LIB/'rescue.uc').read_text().replace('/usr/share/xray/lab/rescue_policy.mjs',str(LIB/'rescue_policy.mjs'))
+        src=src.replace('/etc/init.d/netbird-wrapper',str(b/'netbird-wrapper-service'))
         for old,new in [('/var/run/xtlspro-rescue',str(self.run)),('/etc/xtlspro-rescue',str(self.identity)),('/root/.ssh/known_hosts',str(self.known)),('/root/.ssh',str(self.r/'ssh')),
             ('/etc/init.d/xray_rescue_tunnel',str(b/'tunnel')),('/etc/init.d/xray_rescue_watch',str(b/'watch')),('/etc/init.d/netbird',str(b/'netbird-service')),('/usr/bin/netbird',str(b/'netbird')),('/usr/bin/dbclient',str(b/'dbclient')),('/proc/uptime',str(self.uptime)),('/proc/net/tcp',str(self.proc/'net/tcp'))]:src=src.replace(old,new)
         src=src.replace("'/proc/'",repr(str(self.proc)+'/'))
@@ -109,6 +111,21 @@ class Controller(unittest.TestCase):
         self.assertFalse(any(x[0]=='netbird-service' and x[1]!='enabled' for x in calls))
     def test_existing_identity_is_not_replaced(self):
         before=self.key.read_bytes();self.call(p={'action':'generate'});self.assertEqual(self.key.read_bytes(),before)
+
+    def test_wrapper_autostart_allows_rescue_without_controlling_netbird(self):
+        self.call();(self.run/'state.json').write_text(json.dumps({'outage_since':0}))
+        self.call('tick',scenario='wrapper')
+        self.assertTrue((self.r/'running').exists())
+        calls=[json.loads(x) for x in (self.r/'calls').read_text().splitlines()]
+        self.assertIn(['netbird-wrapper-service','enabled'],calls)
+        self.assertIn(['netbird','status','--json'],calls)
+        self.assertFalse(any(x[0] in ['netbird-service','netbird-wrapper-service'] and x[1]!='enabled' for x in calls))
+
+    def test_disabled_native_and_wrapper_suppress_automatic_rescue(self):
+        self.call();(self.run/'state.json').write_text(json.dumps({'outage_since':0}))
+        self.call('tick',scenario='nb-disabled')
+        self.assertFalse((self.r/'running').exists())
+        self.assertIsNone(json.loads((self.run/'state.json').read_text())['outage_since'])
 
     def test_host_key_comment_is_preserved_without_duplicate(self):
         contents='192.0.2.10 '+KEY+' original-comment\n';self.known.write_text(contents)

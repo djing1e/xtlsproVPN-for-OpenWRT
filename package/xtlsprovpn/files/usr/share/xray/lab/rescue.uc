@@ -104,7 +104,7 @@ function status(){
 function tick(){
     let cfg=config(),p=process(),s=state(),now=int(split(fs.readfile('/proc/uptime') || '0',' ')[0]);
     let previous_reason=s.reason;
-    let enabled=capture(['/etc/init.d/netbird','enabled'],2).ok;
+    let enabled=capture(['/etc/init.d/netbird','enabled'],2).ok || capture(['/etc/init.d/netbird-wrapper','enabled'],2).ok;
     let d=enabled?parse(capture(['/usr/bin/netbird','status','--json'],4).text):null;
     let next=rescue_decide(s,{enabled:cfg.enabled=='1',running:!!p.pid,established:p.established,
         netbird_enabled:enabled,manual_down:d?.daemonStatus=='Idle',
