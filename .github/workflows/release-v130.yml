@@ -1,5 +1,10 @@
 name: Prepare or publish v1.3.0 administration recovery release
 on:
+  push:
+    branches: ['main']
+    paths:
+      - '.github/workflows/release-v130.yml'
+      - 'scripts/publish-v130.sh'
   workflow_dispatch:
     inputs:
       publish:
@@ -29,5 +34,5 @@ jobs:
       - name: Verify exact APK and prepare draft or publish
         env:
           GH_TOKEN: ${{ github.token }}
-          PUBLISH_RELEASE: ${{ inputs.publish }}
+          PUBLISH_RELEASE: ${{ github.event_name == 'push' || inputs.publish }}
         run: bash scripts/publish-v130.sh
