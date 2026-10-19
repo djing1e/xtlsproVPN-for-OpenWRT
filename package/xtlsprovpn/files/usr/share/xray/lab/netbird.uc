@@ -148,6 +148,7 @@ function status() {
         signal_connected:d?.signal?.connected===true,
         package:load(RUN+'/catalog.json') || {installed:package_version(),available:null,update_available:false},
         version:d?.daemonVersion || d?.cliVersion || '',resources:resources(),job:j,
+        guard:load(RUN+'/guard.json') || {reason:'not_checked'},
         firewall_mode:s.firewall_mode || 'not_configured',
         dns_managed:false,client_routes:false,server_routes:false};
 }

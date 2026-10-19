@@ -33,6 +33,7 @@ return baseclass.extend({
             const message = E('p', {role: 'status', 'aria-live': 'polite'});
             const resources = E('p', {style: 'opacity:.75'});
             const versions = E('p', {role: 'status'});
+            const guard = E('p', {role: 'status'});
             const buttons = {};
 
             function refresh(data) {
@@ -48,6 +49,18 @@ return baseclass.extend({
                     (pkg.available ? ' · В репозитории: '+pkg.available+(pkg.update_available?' · доступно обновление':' · обновление не требуется') : ' · нажмите «Проверить обновления»');
                 message.textContent = data.job.message || '';
                 message.style.color = data.job.state === 'failed' ? '#c0392b' : '';
+                const reasons = {
+                    healthy: 'соединение исправно', startup_grace: 'ожидание после запуска',
+                    settling: 'ожидание после восстановления', confirming_failure: 'подтверждение сбоя',
+                    waiting_uplink: 'ожидание доступа в интернет', management_unavailable: 'сервер управления недоступен',
+                    manual_down: 'подключение остановлено вручную', authentication_required: 'нужна повторная авторизация',
+                    paused: 'наблюдение приостановлено', recovering: 'восстановление службы',
+                    cooldown: 'пауза перед повторной попыткой', rate_limited: 'достигнут лимит попыток за час',
+                    not_checked: 'проверка ещё не выполнена'
+                };
+                guard.textContent = !data.installed ? '' : 'Guard: ' +
+                    (!data.enabled ? reasons.paused : reasons[data.guard?.reason] || reasons.not_checked) +
+                    ' · попыток за час: ' + (data.guard?.attempts?.length || 0);
                 resources.textContent = data.installed ?
                     'Бинарник: ' + (data.resources.binary_bytes / 1048576).toFixed(1) + ' МиБ · RAM процесса: ' +
                     (data.resources.rss_bytes / 1048576).toFixed(1) + ' МиБ · Автозапуск: ' +
@@ -115,7 +128,7 @@ return baseclass.extend({
             return E('div', {'class': 'cbi-map'}, [
                 E('h2', {}, 'Административный доступ · NetBird'),
                 E('p', {}, 'Постоянное подключение к вашему self-hosted серверу. После настройки запускается автоматически, независимо от службы Xray.'),
-                summary, resources, versions,
+                summary, resources, versions, guard,
                 row('Сервер управления', url, 'HTTPS-адрес вашего NetBird Management Server.'),
                 row('Имя устройства', hostname, 'Латинские буквы, цифры и дефис. Можно оставить пустым.'),
                 row('Setup key', key, 'Для регистрации устройства. При повторном подключении зарегистрированного устройства можно оставить пустым. В настройках xtlsproVPN ключ не сохраняется.'),
