@@ -69,7 +69,9 @@ else:
  if name=='apk' and scenario=='failed-install':sys.exit(1)
  if name=='apk' and args==['info','-v','-e','netbird']:
   print('netbird-'+('0.80.0-r1' if (r/'upgraded').exists() else '0.78.1-r1'))
- if name=='apk' and args==['list','--all','netbird']:print('netbird-0.80.0-r1 aarch64 [installed]')
+ if name=='apk' and args and args[0]=='list':
+  if args!=['list','-a','netbird']:sys.exit(1)
+  print('netbird-0.80.0-r1 aarch64 [installed]')
  if name=='apk' and args[:2]==['version','-t']:print('<' if args[2]<args[3] else '=' if args[2]==args[3] else '>')
  if name=='apk' and args[:2]==['add','--upgrade']:
   if scenario=='bad-signature':sys.exit(1)

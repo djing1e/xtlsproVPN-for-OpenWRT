@@ -85,7 +85,7 @@ function package_version() {
 }
 function package_catalog(refresh) {
     if (refresh) checked(['apk','update'],120,'Не удалось обновить подписанный каталог OpenWrt');
-    let installed=package_version(), r=capture(['apk','list','--all','netbird'],15), available=null;
+    let installed=package_version(), r=capture(['apk','list','-a','netbird'],15), available=null;
     if (!r.ok) die('Не удалось получить версии NetBird из репозитория OpenWrt');
     for (let line in split(r.text,'\n')) {
         let m=match(line,/^netbird-([0-9][A-Za-z0-9._+~-]*)[[:space:]]/);

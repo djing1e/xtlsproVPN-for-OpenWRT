@@ -76,10 +76,11 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_redirects.py'
           python3 -m unittest discover -s tests -p 'test_stop_safety.py'
           python3 -m unittest discover -s tests -p 'test_local_policy.py'
+          python3 -m unittest discover -s tests -p 'test_service_config_watch.py'
       - name: Build APK with official OpenWrt SDK
         run: |
           bash scripts/build-sdk.sh
-          python3 scripts/make-update-manifest.py dist/xtlsprovpn-1.2.0-r1.apk --output dist/update.json
+          python3 scripts/make-update-manifest.py dist/xtlsprovpn-1.2.0-r2.apk --output dist/update.json
       - uses: actions/upload-artifact@v4
         with:
           name: xtlsprovpn-1.2.0-openwrt-25.12.5-arm64

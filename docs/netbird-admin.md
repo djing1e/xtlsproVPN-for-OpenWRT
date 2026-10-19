@@ -103,6 +103,6 @@ Zram остаётся отдельной необязательной настр
 - https://github.com/openwrt/packages/blob/openwrt-25.12/net/netbird/files/netbird.init
 
 
-В тестовой версии 1.2.0-r1 добавлены проверка и обновление пакета NetBird из
+В тестовой версии 1.2.0-r2 добавлены проверка и обновление пакета NetBird из
 подписанного репозитория OpenWrt. Обновление перезапускает административный
 туннель. Порядок проверки и ограничения: [admin-updates-and-selection.md](admin-updates-and-selection.md).
