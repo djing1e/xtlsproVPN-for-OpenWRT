@@ -4,7 +4,10 @@ set -euo pipefail
 repo=${GITHUB_REPOSITORY:?}
 [[ "$repo" == djing1e/xtlsproVPN-for-OpenWRT ]] || exit 1
 run=39296366884
-release_commit=f5c77c5d39e06968ba88c259bc8111713dc1716b
+source_commit=f5c77c5d39e06968ba88c259bc8111713dc1716b
+# GITHUB_TOKEN can create the release tag at the current workflow HEAD.
+release_commit=$(git rev-parse HEAD)
+git diff --exit-code "$source_commit" "$release_commit" -- package/xtlsprovpn
 tag=v1.3.0
 apk_name=xtlsprovpn-1.3.0-r4.apk
 work=$(mktemp -d "${RUNNER_TEMP:-/tmp}/xtls-ui-release.XXXXXX")
@@ -13,7 +16,7 @@ trap 'rm -rf "$work"' EXIT
 gh run watch "$run" --repo "$repo" --exit-status --interval 20
 gh api "/repos/$repo/actions/runs/$run" > "$work/run.json"
 gh api "/repos/$repo/actions/runs/$run/artifacts" > "$work/artifacts.json"
-read -r artifact_id archive_sha < <(python3 - "$work/run.json" "$work/artifacts.json" "$release_commit" <<'PY'
+read -r artifact_id archive_sha < <(python3 - "$work/run.json" "$work/artifacts.json" "$source_commit" <<'PY'
 import json,re,sys
 r=json.load(open(sys.argv[1]));a=json.load(open(sys.argv[2]))['artifacts']
 assert r['head_sha']==sys.argv[3] and r['conclusion']=='success' and r['status']=='completed'
