@@ -29,7 +29,7 @@ apk)
     case "$3:$INSTALLED" in
       xtlsprovpn:absent) exit 1 ;;
       xtlsprovpn:*) exit 0 ;;
-      'xtlsprovpn=1.2.0-r3:same'|'xtlsprovpn>1.2.0-r3:newer') exit 0 ;;
+      'xtlsprovpn=1.3.0-r4:same'|'xtlsprovpn>1.3.0-r4:newer') exit 0 ;;
       *) exit 1 ;;
     esac
   fi ;;
