@@ -1,0 +1,8 @@
+config rescue 'main'
+    option enabled '0'
+    option host ''
+    option port '22'
+    option user 'xtls-rescue'
+    option remote_port '22001'
+    option local_port '22'
+    option host_key ''

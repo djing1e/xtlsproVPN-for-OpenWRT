@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+# This private file is produced only by the validated controller, never an RPC payload.
+. /var/run/xtlspro-rescue/command.sh
+exec "$@"

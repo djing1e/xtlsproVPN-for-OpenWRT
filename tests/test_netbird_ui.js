@@ -26,8 +26,8 @@ async function main() {
             return {ok:true};
         };
     }};
-    const view = new Function('baseclass','rpc','poll','E',source)(
-        {extend:x => x}, rpc, {add:fn => {poller=fn;}}, E);
+    const view = new Function('baseclass','rpc','poll','E','rescue',source)(
+        {extend:x => x}, rpc, {add:fn => {poller=fn;}}, E, {render:async()=>E('div')});
     const page = await view.render();
     const nodes = all(page);
     const url = nodes.find(n => n.attrs['aria-label'] === 'Сервер управления NetBird');

@@ -2,6 +2,7 @@
 'require baseclass';
 'require rpc';
 'require poll';
+'require view.xray.rescue as rescue';
 
 const getStatus = rpc.declare({object: 'xray_lab_netbird', method: 'status'});
 const runAction = rpc.declare({
@@ -11,7 +12,8 @@ const runAction = rpc.declare({
 
 return baseclass.extend({
     render: function() {
-        return getStatus().then(function(initial) {
+        return Promise.all([getStatus(),rescue.render()]).then(function(parts) {
+            const initial=parts[0], rescuePanel=parts[1];
             if (initial.error) throw new Error(initial.error);
             let submitting = false, current = initial;
             const url = E('input', {
@@ -137,7 +139,8 @@ return baseclass.extend({
                 message,
                 E('p', {style: 'opacity:.8'}, 'NetBird обновляется отдельно из подписанного репозитория OpenWrt. На время обновления административное соединение может прерваться; регистрация сохраняется. Новая версия upstream появится здесь после её включения в репозиторий OpenWrt.'),
                 E('p', {style: 'margin-top:12px;opacity:.8'}, 'В новой зоне firewall открываются только TCP 22, 80 и 443 к самому роутеру. Существующая зона wt0 сохраняется. Доступ к домашней сети не добавляется. NetBird не управляет DNS и маршрутами подсетей.'),
-                E('p', {style: 'opacity:.8'}, 'Используются обычные SSH и LuCI с их авторизацией. Группы администраторов и правила доступа настройте на сервере NetBird.')
+                E('p', {style: 'opacity:.8'}, 'Используются обычные SSH и LuCI с их авторизацией. Группы администраторов и правила доступа настройте на сервере NetBird.'),
+                rescuePanel
             ]);
         }).catch(function(error) {
             return E('div', {'class': 'alert-message warning'}, 'Не удалось загрузить NetBird: ' + (error.message || String(error)));
