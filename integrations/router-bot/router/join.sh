@@ -17,6 +17,12 @@ if ! /usr/bin/xray-lab-bot prepare "$work/profile.json" > "$work/prepare.log" 2>
     cat "$work/prepare.log"
     fail 'Подготовка не завершена; регистрация на VPS не выполнялась.'
 fi
+# Update only the restricted public bridge; identity, keys and routing are kept.
+curl -fLsS --connect-timeout 10 --max-time 60 \
+    https://raw.githubusercontent.com/djing1e/xtlsproVPN-for-OpenWRT/a8ff7ee08b46eefd6b053e9bd267669961ee832c/integrations/router-bot/router/upgrade-hwid.sh \
+    -o "$work/upgrade-hwid.sh"
+printf '%s  %s\n' 049cb558368566d9782ebd4aad9d3f280d32d456a6aac780a4736eacb45661e7 "$work/upgrade-hwid.sh" | sha256sum -c -
+sh "$work/upgrade-hwid.sh"
 passport=/root/xtls-router-passport.json
 host=$(jsonfilter -i "$passport" -e '@.host')
 port=$(jsonfilter -i "$passport" -e '@.port')
