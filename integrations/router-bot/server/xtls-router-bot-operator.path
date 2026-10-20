@@ -1,0 +1,9 @@
+[Unit]
+Description=Administrative request queue for xtlsproVPN router bot
+
+[Path]
+PathExists=/var/lib/xtls-router-bot/operator-inbox/request.json
+Unit=xtls-router-bot-operator.service
+
+[Install]
+WantedBy=multi-user.target

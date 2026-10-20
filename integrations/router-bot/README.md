@@ -244,3 +244,6 @@ for evidence, VPS-side fixes and the precise limits of physical acceptance.
 and waits for its compact SSH fingerprint code. No profile file transfer or new
 listener is needed. Existing records and grants use the same identity-bound
 enrollment transaction. See [EASY-ENROLLMENT.md](EASY-ENROLLMENT.md).
+
+
+Администраторское меню и отображение фактического HWID: [ADMIN-MENU.md](ADMIN-MENU.md).

@@ -35,7 +35,7 @@ class OperationsTests(unittest.TestCase):
         text = self.messages()[-1]
         self.assertIn('Customer', text)
         self.assertIn(str(CLIENT), text)
-        self.assertIn('R-000001', text)
+        self.assertIn('LAB', text)
         self.assertIsNone(self.store.grant_epoch(CLIENT, 'lab'))
 
     def test_grant_and_revoke_notifications_with_button(self):

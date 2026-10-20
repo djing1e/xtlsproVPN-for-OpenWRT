@@ -18,7 +18,7 @@ class Bridge(unittest.TestCase):
             'uci':{'cfg123456':{'alias':'Finland','password':'SECRET-CREDENTIAL'},'cfgabcdef':{}}}
         mods=self.r/'modules';mods.mkdir()
         (mods/'uci.uc').write_text('''import * as fs from 'fs';
-export function cursor(){return {load:function(){return true;},get_all:function(){return json(fs.readfile(getenv('BRIDGE_FIXTURE'))).uci;}};};
+export function cursor(){return {load:function(){return true;},get_all:function(name){let f=json(fs.readfile(getenv('BRIDGE_FIXTURE')));return name=='forkop_xray'?(f.hwid_settings || {}):f.uci;}};};
 ''')
         ctl=self.r/'controller'
         ctl.write_text('''#!/usr/bin/env python3
@@ -46,7 +46,7 @@ print(json.dumps({'plans':[],'job':{'state':'idle'}} if sys.argv[1:] == ['status
         onboard=self.r/'onboard.uc'
         onboard.write_text("import * as fs from 'fs';printf('%J\\n',{args:ARGV,input:json(fs.stdin.read(4097) || '{}')});")
         self.onboard=onboard
-        self.src=self.r/'ssh.uc';self.src.write_text((BASE/'router/ssh.uc').read_text().replace('/usr/bin/xray-lab-control',str(ctl)).replace('/etc/xtlspro-bot/admin-worker',str(admin)).replace('/etc/xtlspro-bot/update-worker',str(updates)).replace('/etc/xtlspro-bot/onboard.uc',str(onboard)).replace('/usr/bin/ucode',shutil.which('ucode')))
+        self.src=self.r/'ssh.uc';self.src.write_text((BASE/'router/ssh.uc').read_text().replace('/usr/bin/xray-lab-control',str(ctl)).replace('/etc/xtlspro-bot/admin-worker',str(admin)).replace('/etc/xtlspro-bot/update-worker',str(updates)).replace('/etc/xtlspro-bot/onboard.uc',str(onboard)).replace('/usr/bin/ucode',shutil.which('ucode')).replace('/etc/forkop-xray/device-hwid-short',str(self.r/'hwid')))
         self.mods=mods
     def call(self,cmd,ok=True,input_data=None):
         (self.r/'fixture.json').write_text(json.dumps(self.fixture))
@@ -91,7 +91,21 @@ print(json.dumps({'plans':[],'job':{'state':'idle'}} if sys.argv[1:] == ['status
     def test_status_only_exports_whitelist(self):
         d=self.call('xtlsbot-v1 status')['data']
         self.assertTrue(d['running']);self.assertEqual(d['selected'],['cfg123456'])
-        self.assertEqual(set(d),{'version','enabled','running','mode','selected','proxy_ok','health_checked','operation_busy','subscription','job'})
+        self.assertEqual(set(d),{'version','enabled','running','mode','selected','proxy_ok','health_checked','operation_busy','hwid','subscription','job'})
+    def test_hwid_uses_same_saved_identity_and_never_generates_one(self):
+        self.fixture['hwid_settings']={'hwid_enabled':'1'}
+        self.assertIsNone(self.call('xtlsbot-v1 status')['data']['hwid'])
+        self.assertFalse((self.r/'hwid').exists())
+        (self.r/'hwid').write_text('abcd-1234-5678-90ef\n')
+        self.assertEqual(self.call('xtlsbot-v1 status')['data']['hwid'],'abcd-1234-5678-90ef')
+        self.assertEqual((self.r/'hwid').read_text(),'abcd-1234-5678-90ef\n')
+    def test_hwid_is_actual_custom_header_without_other_settings(self):
+        self.fixture['hwid_settings']={'hwid_enabled':'1','hwid':'abcd-1234-5678-90ef','subscription_url':'SECRET-URL'}
+        self.assertEqual(self.call('xtlsbot-v1 status')['data']['hwid'],'abcd-1234-5678-90ef')
+        self.fixture['hwid_settings']['hwid_enabled']='0'
+        self.assertIsNone(self.call('xtlsbot-v1 status')['data']['hwid'])
+        self.fixture['hwid_settings']={'hwid':'invalid\nSECRET-URL'}
+        self.assertIsNone(self.call('xtlsbot-v1 status')['data']['hwid'])
     def test_subscription_only_numeric_id_dates_and_counters(self):
         self.fixture['subscription']={'announce':'id: 4242','title':'SECRET-TITLE',
             'url':'SECRET-URL','available':True,'updated':100,'expire':200,

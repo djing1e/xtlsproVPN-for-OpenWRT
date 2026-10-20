@@ -91,6 +91,13 @@ class Store:
                 CREATE TABLE IF NOT EXISTS notifications (
                     id INTEGER PRIMARY KEY, uid INTEGER, router TEXT, granted INTEGER,
                     epoch TEXT, state TEXT DEFAULT 'pending', retry_at INTEGER DEFAULT 0);
+                CREATE TABLE IF NOT EXISTS router_hwids (
+                    router TEXT PRIMARY KEY, hwid TEXT, updated INTEGER);
+                CREATE TABLE IF NOT EXISTS operator_dialogs (
+                    uid INTEGER PRIMARY KEY, stage TEXT, name TEXT, expires INTEGER);
+                CREATE TABLE IF NOT EXISTS operator_jobs (
+                    id TEXT PRIMARY KEY, uid INTEGER, action TEXT, created INTEGER,
+                    state TEXT, text TEXT DEFAULT '');
                 CREATE TABLE IF NOT EXISTS input_dialogs (
                     uid INTEGER PRIMARY KEY, router TEXT, expires INTEGER);
                 CREATE TABLE IF NOT EXISTS access_audit (
@@ -240,6 +247,45 @@ class Store:
     def finish_monitor_event(self, event_id):
         with self.connect() as db:
             db.execute("UPDATE monitor_events SET state='delivered' WHERE id=?", (event_id,))
+
+    def cache_hwid(self, rid, value):
+        if value is not None and (not isinstance(value,str) or not re.fullmatch(r'[A-Za-z0-9=-]{10,64}',value)):
+            value=None
+        with self.connect() as db:
+            db.execute('INSERT INTO router_hwids VALUES (?,?,?) ON CONFLICT(router) DO UPDATE SET hwid=excluded.hwid,updated=excluded.updated', (rid,value,int(time.time())))
+
+    def hwid(self, rid):
+        with self.connect() as db:
+            row=db.execute('SELECT hwid FROM router_hwids WHERE router=?',(rid,)).fetchone()
+            return row[0] if row else None
+
+    def operator_dialog(self, uid, stage=None, name=''):
+        with self.connect() as db:
+            if stage=='clear':db.execute('DELETE FROM operator_dialogs WHERE uid=?',(uid,));return
+            if stage:
+                db.execute('INSERT INTO operator_dialogs VALUES (?,?,?,?) ON CONFLICT(uid) DO UPDATE SET stage=excluded.stage,name=excluded.name,expires=excluded.expires',(uid,stage,name,int(time.time())+900))
+            row=db.execute('SELECT * FROM operator_dialogs WHERE uid=? AND expires>=?',(uid,int(time.time()))).fetchone()
+            return dict(row) if row else None
+
+    def operator_start(self, uid, action):
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            if db.execute("SELECT 1 FROM operator_jobs WHERE state='pending'").fetchone():
+                raise SafeError('Административная операция уже выполняется. Дождитесь результата.')
+            if db.execute("SELECT 1 FROM operations WHERE state='running'").fetchone():
+                raise SafeError('Выполняется операция роутера. Дождитесь её завершения.')
+            if db.execute('SELECT 1 FROM operator_jobs WHERE action=? AND created>?',(action,int(time.time())-60)).fetchone():
+                raise SafeError('Подождите минуту перед повтором операции.')
+            job=str(uuid.uuid4())
+            db.execute("INSERT INTO operator_jobs(id,uid,action,created,state) VALUES (?,?,?,?,'pending')",(job,uid,action,int(time.time())))
+            return job
+
+    def operator_pending(self):
+        with self.connect() as db:
+            return [dict(row) for row in db.execute("SELECT * FROM operator_jobs WHERE state='pending'")]
+
+    def operator_finish(self, job, state):
+        with self.connect() as db:db.execute('UPDATE operator_jobs SET state=? WHERE id=?',(state,job))
 
     def cache_subscription(self, rid, data):
         sid = data.get('id')
@@ -454,7 +500,8 @@ class Bot:
             self.store.router_code(rid)
 
     def router_label(self, rid):
-        return self.store.router_code(rid) + ' · ' + self.config['routers'][rid]['name']
+        hwid=self.store.hwid(rid)
+        return self.config['routers'][rid]['name'] + (' · HWID ' + hwid if hwid else ' · HWID не получен')
 
     def user_label(self, uid):
         code, name = self.store.user_info(uid)
@@ -627,6 +674,8 @@ class Bot:
             first = next(rid for rid in self.config['routers'] if rid in self.visible(uid))
             rows.append([self.button(uid, first, '🆔 Мой ID', 'whoami'),
                          self.button(uid, first, 'ℹ️ Помощь', 'help')])
+        if uid == self.config['admin_id']:
+            rows.append([self.button(uid,first,'⚙️ Администрирование бота','operator_menu')])
         self.send(uid, 'xtlsproVPN · Управление роутерами\nВыберите роутер:', rows)
 
     def status(self, uid, rid, epoch=None):
@@ -634,6 +683,8 @@ class Bot:
         router = self.config['routers'][rid]
         data = self.router_call(uid, rid, 'xtlsbot-v1 status', epoch)
         locations = self.router_call(uid, rid, 'xtlsbot-v1 locations', epoch)
+        if 'hwid' in data:
+            self.store.cache_hwid(rid,data['hwid'])
         if isinstance(data.get('subscription'), dict):
             self.store.cache_subscription(rid, data['subscription'])
         names = [str(n.get('name', 'Локация'))[:120] for n in locations.get('nodes', [])
@@ -1020,6 +1071,63 @@ class Bot:
                 '\nПосле ввода появится подтверждение. Ожидание — 10 минут.')
         self.send(uid, text, [[self.button(uid, rid, 'Отмена', 'access')]])
 
+    def operator_menu(self, uid, rid):
+        self.admin(uid)
+        self.store.operator_dialog(uid,'clear')
+        self.send(uid,'Администрирование бота',[
+            [self.button(uid,rid,'➕ Добавить роутер','operator_add')],
+            [self.button(uid,rid,'🔐 Создать бэкап','operator_backup')],
+            [self.button(uid,rid,'🏠 Мои роутеры','menu')]])
+
+    def operator_submit(self, uid, action, code='', name=''):
+        self.admin(uid)
+        from operator_client import request
+        job=self.store.operator_start(uid,action)
+        try:request(action,uid,code,name,job=job)
+        except Exception:
+            self.store.operator_finish(job,'failed')
+            raise SafeError('Не удалось передать задание. Проверьте установку административного обработчика.') from None
+        self.send(uid,'Задание принято. '+('Проверяем устройство и аварийный канал; регистрация может занять до нескольких минут…' if action=='enroll' else 'Создаём и проверяем зашифрованную резервную копию…'))
+
+    def operator_input(self, uid, text, dialog):
+        self.admin(uid)
+        from operator_client import valid_name,router_command
+        if dialog['stage']=='name':
+            if not valid_name(text):raise SafeError('Имя: от 1 до 80 символов, без переводов строк.')
+            try:command=router_command(self.config)
+            except Exception:raise SafeError('Профиль подключения ещё не настроен на VPS.') from None
+            self.store.operator_dialog(uid,'code',text)
+            self.send(uid,'Выполните следующий блок целиком на роутере через SSH. Затем отправьте сюда только полученный код xtls-pair-v1. Ожидание — 15 минут.')
+            self.send(uid,command)
+        elif dialog['stage']=='code':
+            if not re.fullmatch(r'xtls-pair-v1:[0-9.]+:[0-9]{1,5}:[A-Za-z0-9+/]{43}',text):
+                raise SafeError('Отправьте только короткий код xtls-pair-v1, выданный роутером.')
+            self.operator_submit(uid,'enroll',text,dialog['name'])
+            self.store.operator_dialog(uid,'clear')
+
+    def deliver_operator_results(self):
+        jobs=self.store.operator_pending()
+        if not jobs:return
+        from operator_client import result,CONFIG
+        for job in jobs:
+            try:value=result(job['id'])
+            except (OSError,ValueError):value=None
+            if value and value.get('state') in ('done','failed'):
+                if value['state']=='done' and job['action']=='enroll':
+                    with self.policy_lock:
+                        current=load_config(CONFIG)
+                        self.config=current
+                        self.bridge.config=current
+                        for rid in current['routers']:
+                            self.locks.setdefault(rid,threading.Lock())
+                            self.store.router_code(rid)
+                self.send(job['uid'],str(value.get('text','Операция завершена.'))[:3900])
+                self.store.operator_finish(job['id'],value['state'])
+                if value['state']=='done' and job['action']=='enroll':self.menu(job['uid'])
+            elif time.time()-job['created']>1200:
+                self.send(job['uid'],'Результат административной операции не подтверждён. Проверьте состояние на VPS; автоматического повтора нет.')
+                self.store.operator_finish(job['id'],'unknown')
+
     def help(self, uid):
         self.authorize(uid)
         text = ('Выберите роутер, затем откройте «Локации» или нажмите «Автовыбор».'
@@ -1070,6 +1178,11 @@ class Bot:
         try:
             if not callback:
                 text = message.get('text', '').strip()
+                operator_dialog=self.store.operator_dialog(uid) if uid==self.config['admin_id'] else None
+                if operator_dialog and not text.startswith('/'):
+                    self.operator_input(uid,text,operator_dialog)
+                    return
+                if uid==self.config['admin_id']:self.store.operator_dialog(uid,'clear')
                 dialog = self.store.dialog(uid) if uid == self.config['admin_id'] else None
                 if dialog and not text.startswith('/'):
                     self.access_prompt(uid, dialog, text, True)
@@ -1102,7 +1215,16 @@ class Bot:
             epoch = button['grant_epoch']
             self.authorize(uid, rid, epoch)
             self.store.clear_dialog(uid)
-            if action == 'menu':
+            if uid==self.config['admin_id']:self.store.operator_dialog(uid,'clear')
+            if action == 'operator_menu':
+                self.operator_menu(uid,rid)
+            elif action == 'operator_add':
+                self.admin(uid)
+                self.store.operator_dialog(uid,'name')
+                self.send(uid,'Введите имя роутера, например HOME или Клиент 1481 · Москва.',[[self.button(uid,rid,'Отмена','operator_menu')]])
+            elif action == 'operator_backup':
+                self.operator_submit(uid,'backup')
+            elif action == 'menu':
                 self.menu(uid)
             elif action == 'help':
                 self.help(uid)
@@ -1222,6 +1344,7 @@ class Bot:
         while True:
             try:
                 self.deliver_notifications()
+                self.deliver_operator_results()
                 updates = self.tg.call('getUpdates', offset=self.store.offset(), timeout=10,
                                        allowed_updates=['message', 'callback_query'], limit=20)
                 for update in updates:

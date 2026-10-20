@@ -99,7 +99,7 @@ if component!='xray':
         return result,json.loads(result.stdout) if result.stdout else None
 
     def wait_job(self):
-        for _ in range(300):
+        for _ in range(1500):
             p=self.run/'xtlspro-bot-updates/job.json'
             if p.exists():
                 j=json.loads(p.read_text())

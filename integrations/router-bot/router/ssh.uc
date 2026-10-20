@@ -17,6 +17,17 @@ function invoke(args) {
     return d;
 }
 function nonnegative(v) { return (type(v)=='int' || type(v)=='double') && v>=0 && v<=9007199254740991?v:null; }
+function subscription_hwid() {
+    // Read exactly the effective X-HWID source. Never generate or change it here.
+    let c=cursor(),s=c.get_all('forkop_xray','main') || {};
+    if(s.hwid_enabled=='0')return null;
+    let value=s.hwid || '';
+    if(s.hwid_enabled=='1' && !value){
+        value=trim(fs.readfile('/etc/forkop-xray/device-hwid-short') || '');
+        if(!match(value,/^[a-f0-9]{4}(-[a-f0-9]{4}){3}$/))return null;
+    }
+    return type(value)=='string' && length(value)>=10 && length(value)<=64 && !!match(value,/^[A-Za-z0-9=-]+$/)?value:null;
+}
 function subscription(v) {
     let m=type(v?.announce)=='string'?match(v.announce,/^id:[[:space:]]*([0-9]{1,12})$/):null;
     // Never export title/announce text, URL, node list or other metadata.
@@ -115,7 +126,7 @@ try {
     if(op=='status')reply({version:s.version || null,enabled:s.enabled===true,
         running:s.core?.running===true,mode:s.mode=='auto'?'auto':'manual',
         selected,proxy_ok:s.health?.proxy_ok ?? null,health_checked:s.health?.checked || null,
-        operation_busy:s.operation_busy===true,subscription:subscription(s.subscription),job:job(s.job)});
+        operation_busy:s.operation_busy===true,hwid:subscription_hwid(),subscription:subscription(s.subscription),job:job(s.job)});
     if(op=='diagnostics')reply({uptime:nonnegative(s.uptime),
         running:s.core?.running===true,pid:nonnegative(s.core?.pid),
         memory_total:nonnegative(s.memory?.total),memory_available:nonnegative(s.memory?.available),

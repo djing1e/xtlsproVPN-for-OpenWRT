@@ -74,6 +74,20 @@ class BackupTests(unittest.TestCase):
         for name,body in names.items():self.assertEqual((output/name).read_text(),body)
         self.assertEqual((output/'usr/local/sbin/xtls-router-add').stat().st_mode&0o777,0o755)
 
+    def test_operator_helpers_and_units_roundtrip_and_restore_layout(self):
+        for name in backup.OPERATOR_FILES:
+            path=self.root/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text('operator-'+Path(name).name)
+        archive=backup.create(self.root,self.stage)
+        recovered=self.stage/'operator-recovered';backup.unpack(archive,backup.key_path(self.root),recovered,self.stage)
+        for name in backup.OPERATOR_FILES:self.assertEqual((recovered/name).read_bytes(),(self.root/name).read_bytes())
+        destination=self.stage/'operator-vps';destination.mkdir()
+        account=types.SimpleNamespace(pw_uid=os.getuid(),pw_gid=os.getgid())
+        with patch.object(backup.pwd,'getpwnam',return_value=account),patch.object(backup.os,'chown'):
+            backup.apply_restore(recovered,backup.key_path(self.root),destination,activate=False)
+        self.assertEqual((destination/backup.STATE/'operator-inbox').stat().st_mode&0o777,0o700)
+        self.assertEqual((destination/'var/lib/xtls-router-operator').stat().st_mode&0o777,0o755)
+        self.assertFalse((destination/backup.STATE/'operator-inbox/request.json').exists())
+
     def test_apply_into_new_vps_tree_preserves_ids_and_refuses_overwrite(self):
         archive = backup.create(self.root, self.stage)
         recovered = self.stage / 'recovered'
