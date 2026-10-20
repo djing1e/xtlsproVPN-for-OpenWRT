@@ -19,8 +19,8 @@ import tempfile
 import fleet
 from bot import SafeError, load_config
 
-BOOTSTRAP_REF='358d2583635e8b63e2fc9cdea7c39a6383054759'
-BOOTSTRAP_SHA='7d6fd820dc1893b0f3e1ada23c75fd562b405297597af08fa33cb3858a1ac875'
+BOOTSTRAP_REF='219b4a43395122635c06f56827a5ad196586613b'
+BOOTSTRAP_SHA='3860e4125ddd49d4830b1d81bfcdd9d189543626b40b38fe8bf12dc3ba3c4d8d'
 BOOTSTRAP_URL='https://raw.githubusercontent.com/djing1e/xtlsproVPN-for-OpenWRT/'+BOOTSTRAP_REF+'/integrations/router-bot/router/join.sh'
 
 
