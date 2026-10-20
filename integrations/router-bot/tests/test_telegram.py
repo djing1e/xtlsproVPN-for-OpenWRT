@@ -49,7 +49,7 @@ class TelegramTests(unittest.TestCase):
         self.tg, self.bridge = TelegramFake(), BridgeFake()
         self.bot = b.Bot(self.config, self.tg, self.store, self.bridge)
         # Deterministic UI tests; separate operations tests exercise real scheduling.
-        self.bot.submit_read = lambda uid, rid, action, epoch: (self.bot.status if action == 'status' else self.bot.locations)(uid, rid, epoch)
+        self.bot.submit_read = lambda uid, rid, action, epoch: {'status': self.bot.status, 'locations': self.bot.locations, 'diagnostics': self.bot.diagnostics}[action](uid, rid, epoch)
 
     def tearDown(self):
         self.bot.pool.shutdown(wait=True)

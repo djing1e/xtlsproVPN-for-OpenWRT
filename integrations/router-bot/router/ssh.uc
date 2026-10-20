@@ -16,6 +16,15 @@ function invoke(args) {
     if(d.error)fail('operation_rejected');
     return d;
 }
+function nonnegative(v) { return (type(v)=='int' || type(v)=='double') && v>=0 && v<=9007199254740991?v:null; }
+function subscription(v) {
+    let m=type(v?.announce)=='string'?match(v.announce,/^id:[[:space:]]*([0-9]{1,12})$/):null;
+    // Never export title/announce text, URL, node list or other metadata.
+    return {id:m && m[0]==v.announce?m[1]:null,available:v?.available===true,
+        updated:nonnegative(v?.updated),expire:nonnegative(v?.expire),
+        used:nonnegative(v?.traffic?.used),total:nonnegative(v?.traffic?.total),
+        remaining:nonnegative(v?.traffic?.remaining),unlimited:v?.traffic?.unlimited===true};
+}
 function job(d) {
     return {id:type(d?.id)=='string'?d.id:null,state:d?.state || 'idle',
         action:d?.action || null,updated:d?.updated || null};
@@ -27,6 +36,7 @@ try {
     let op=null,target=null,requested_job=null;
     if(cmd=='xtlsbot-v1 status')op='status';
     else if(cmd=='xtlsbot-v1 locations')op='locations';
+    else if(cmd=='xtlsbot-v1 diagnostics')op='diagnostics';
     else if(cmd=='xtlsbot-v1 auto'){op='select';target='auto';}
     else {
         let m=match(cmd,/^xtlsbot-v1 select (cfg[A-Za-z0-9_-]{6})$/);
@@ -48,7 +58,15 @@ try {
     if(op=='status')reply({version:s.version || null,enabled:s.enabled===true,
         running:s.core?.running===true,mode:s.mode=='auto'?'auto':'manual',
         selected,proxy_ok:s.health?.proxy_ok ?? null,health_checked:s.health?.checked || null,
-        operation_busy:s.operation_busy===true,job:job(s.job)});
+        operation_busy:s.operation_busy===true,subscription:subscription(s.subscription),job:job(s.job)});
+    if(op=='diagnostics')reply({uptime:nonnegative(s.uptime),
+        running:s.core?.running===true,pid:nonnegative(s.core?.pid),
+        memory_total:nonnegative(s.memory?.total),memory_available:nonnegative(s.memory?.available),
+        rss:nonnegative(s.core?.rss),interface_up:s.interface?.up===true,
+        interception_active:s.interception?.active===true,
+        proxy_ok:s.health?.proxy_ok ?? null,health_checked:nonnegative(s.health?.checked),
+        proxy_delay:nonnegative(s.health?.delay),diagnostics_checked:nonnegative(s.diagnostics_checked),
+        errors:nonnegative(s.diagnostics_summary?.errors),pending:nonnegative(s.diagnostics_summary?.pending)});
     if(op=='locations') {
         let c=cursor();c.load('xray_core');let cfg=c.get_all('xray_core') || {};
         // snapshot.name may fall back to the server endpoint: never expose it.

@@ -2,6 +2,8 @@
 """Administrator and client router pilot. No arbitrary SSH or Telegram shell commands."""
 import concurrent.futures
 from contextlib import contextmanager
+from datetime import datetime, timezone, timedelta
+import math
 import ipaddress
 import json
 import logging
@@ -76,6 +78,15 @@ class Store:
                 CREATE TABLE IF NOT EXISTS user_ids (
                     seq INTEGER PRIMARY KEY AUTOINCREMENT, uid INTEGER UNIQUE NOT NULL,
                     name TEXT NOT NULL DEFAULT '');
+                CREATE TABLE IF NOT EXISTS monitoring (
+                    router TEXT PRIMARY KEY, enabled INTEGER DEFAULT 0,
+                    failures INTEGER DEFAULT 0, offline INTEGER DEFAULT 0, checked INTEGER,
+                    proxy_failures INTEGER DEFAULT 0, last_health INTEGER DEFAULT 0, proxy_bad INTEGER DEFAULT 0);
+                CREATE TABLE IF NOT EXISTS monitor_events (
+                    id INTEGER PRIMARY KEY, router TEXT, offline INTEGER,
+                    state TEXT DEFAULT 'pending', kind TEXT DEFAULT 'ssh');
+                CREATE TABLE IF NOT EXISTS router_subscriptions (
+                    router TEXT PRIMARY KEY, subscription_id TEXT, updated INTEGER);
                 CREATE TABLE IF NOT EXISTS notifications (
                     id INTEGER PRIMARY KEY, uid INTEGER, router TEXT, granted INTEGER,
                     epoch TEXT, state TEXT DEFAULT 'pending', retry_at INTEGER DEFAULT 0);
@@ -176,6 +187,57 @@ class Store:
         with self.connect() as db:
             db.execute('UPDATE notifications SET state=?,retry_at=? WHERE id=?', (state, retry_at, event_id))
 
+    def monitor_status(self, rid):
+        with self.connect() as db:
+            row = db.execute('SELECT * FROM monitoring WHERE router=?', (rid,)).fetchone()
+            return dict(row) if row else {'enabled': 0, 'failures': 0, 'offline': 0, 'checked': None, 'proxy_failures': 0, 'last_health': 0, 'proxy_bad': 0}
+
+    def monitor_enable(self, rid, enabled):
+        with self.connect() as db:
+            db.execute('INSERT INTO monitoring(router,enabled) VALUES (?,?) ON CONFLICT(router) DO UPDATE SET enabled=excluded.enabled,failures=0,offline=0,checked=NULL,proxy_failures=0,last_health=0,proxy_bad=0', (rid, int(enabled)))
+            db.execute("UPDATE monitor_events SET state='superseded' WHERE router=? AND state='pending'", (rid,))
+
+    def monitor_result(self, rid, reachable, health=None):
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row = db.execute('SELECT * FROM monitoring WHERE router=? AND enabled=1', (rid,)).fetchone()
+            if not row:
+                return
+            failures = 0 if reachable else row['failures'] + 1
+            offline = int(failures >= 3) if not reachable else 0
+            if offline != row['offline']:
+                db.execute('INSERT INTO monitor_events(router,offline) VALUES (?,?)', (rid, offline))
+            db.execute('UPDATE monitoring SET failures=?,offline=?,checked=? WHERE router=?', (failures, offline, int(time.time()), rid))
+            checked = (health or {}).get('health_checked')
+            ok = (health or {}).get('proxy_ok')
+            if (reachable and type(checked) in (int, float) and
+                    time.time()-180 <= checked <= time.time()+30 and checked > row['last_health'] and type(ok) is bool):
+                failed = 0 if ok else row['proxy_failures'] + 1
+                bad = int(failed >= 3) if not ok else 0
+                if bad != row['proxy_bad']:
+                    db.execute("INSERT INTO monitor_events(router,offline,kind) VALUES (?,?,'proxy')", (rid, bad))
+                db.execute('UPDATE monitoring SET proxy_failures=?,proxy_bad=?,last_health=? WHERE router=?', (failed, bad, checked, rid))
+
+    def pending_monitor_events(self):
+        with self.connect() as db:
+            return [dict(row) for row in db.execute("SELECT * FROM monitor_events WHERE state='pending' ORDER BY id LIMIT 5")]
+
+    def finish_monitor_event(self, event_id):
+        with self.connect() as db:
+            db.execute("UPDATE monitor_events SET state='delivered' WHERE id=?", (event_id,))
+
+    def cache_subscription(self, rid, data):
+        sid = data.get('id')
+        if sid is not None and not re.fullmatch(r'[0-9]{1,12}', str(sid)):
+            sid = None
+        with self.connect() as db:
+            db.execute('INSERT INTO router_subscriptions VALUES (?,?,?) ON CONFLICT(router) DO UPDATE SET subscription_id=excluded.subscription_id,updated=excluded.updated',
+                       (rid, sid, int(time.time())))
+
+    def customer_numbers(self, uid):
+        with self.connect() as db:
+            return [row[0] for row in db.execute('SELECT DISTINCT s.subscription_id FROM router_subscriptions s JOIN grants g ON g.router=s.router WHERE g.uid=? AND s.subscription_id IS NOT NULL ORDER BY s.subscription_id', (uid,))]
+
     def set_dialog(self, uid, rid):
         with self.connect() as db:
             db.execute('INSERT INTO input_dialogs VALUES (?,?,?) ON CONFLICT(uid) DO UPDATE SET router=excluded.router,expires=excluded.expires',
@@ -245,7 +307,7 @@ class Bridge:
         self.config = config
 
     def call(self, router, command):
-        allowed = command in ('xtlsbot-v1 status', 'xtlsbot-v1 locations', 'xtlsbot-v1 auto')
+        allowed = command in ('xtlsbot-v1 status', 'xtlsbot-v1 locations', 'xtlsbot-v1 diagnostics', 'xtlsbot-v1 auto')
         allowed |= bool(re.fullmatch(r'xtlsbot-v1 select cfg[A-Za-z0-9_-]{6}', command))
         allowed |= bool(re.fullmatch(r'xtlsbot-v1 job [a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}', command))
         if not allowed:
@@ -311,10 +373,14 @@ class Bot:
 
     def user_label(self, uid):
         code, name = self.store.user_info(uid)
-        return code + (' · ' + name if name else '') + ' · Telegram ID ' + str(uid)
+        numbers = self.store.customer_numbers(uid)
+        label = 'Клиент ' + ' / '.join('№' + str(n) for n in numbers) if numbers else 'Пользователь'
+        return label + (' · ' + name if name else '') + ' · Telegram ID ' + str(uid)
 
     def identity(self, uid):
-        return 'Ваш ID: ' + self.store.user_info(uid)[0] + '\nTelegram ID: ' + str(uid)
+        numbers = self.store.customer_numbers(uid)
+        label = 'Клиент ' + ' / '.join('№' + str(n) for n in numbers) + '\n' if numbers else ''
+        return label + 'Telegram ID: ' + str(uid)
 
     def submit_read(self, uid, rid, action, epoch):
         with self.read_guard:
@@ -323,7 +389,7 @@ class Bot:
             self.read_busy.add(uid)
         def work():
             try:
-                (self.status if action == 'status' else self.locations)(uid, rid, epoch)
+                {'status': self.status, 'locations': self.locations, 'diagnostics': self.diagnostics}[action](uid, rid, epoch)
             except SafeError as error:
                 self.inform(uid, str(error))
             except Exception:
@@ -339,7 +405,50 @@ class Bot:
                 self.read_busy.discard(uid)
             raise
 
+    def monitor_check(self, rid):
+        if not self.store.monitor_status(rid)['enabled'] or self.locks[rid].locked():
+            return
+        try:
+            data = self.bridge.call(self.config['routers'][rid], 'xtlsbot-v1 status')
+            reachable = True
+        except SafeError:
+            reachable = False
+            data = None
+        self.store.monitor_result(rid, reachable, data)
+
+    def monitor_loop(self):
+        while True:
+            for rid in self.config['routers']:
+                try:
+                    self.monitor_check(rid)
+                except Exception:
+                    LOG.error('monitor check failed')
+            time.sleep(60)
+
+    def monitor_menu(self, uid, rid):
+        self.admin(uid)
+        state = self.store.monitor_status(rid)
+        text = (self.router_label(rid) + ' · Мониторинг\n' +
+                ('Включён' if state['enabled'] else 'Выключен') +
+                '\nПроверка SSH-доступности через NetBird примерно раз в минуту.'
+                '\nУведомление после трёх ошибок SSH или трёх разных свежих ошибок HTTPS, и при восстановлении.'
+                '\nПроверки не перезапускают службы и не меняют настройки.')
+        self.send(uid, text, [[self.button(uid, rid, 'Выключить' if state['enabled'] else 'Включить',
+                         'monitor_off' if state['enabled'] else 'monitor_on')],
+                         [self.button(uid, rid, '← Статус', 'status')]])
+
     def deliver_notifications(self):
+        for event in self.store.pending_monitor_events():
+            if event['router'] not in self.config['routers']:
+                self.store.finish_monitor_event(event['id'])
+                continue
+            if event['kind'] == 'proxy':
+                text = ('⚠️ Прокси не проходит HTTPS-проверку: ' if event['offline'] else '✅ HTTPS-проверка прокси восстановлена: ')
+            else:
+                text = ('⚠️ Нет ответа по SSH через NetBird: ' if event['offline'] else '✅ SSH-доступ восстановлен: ')
+            text += self.router_label(event['router'])
+            self.send(self.config['admin_id'], text)
+            self.store.finish_monitor_event(event['id'])
         for event in self.store.pending_notifications():
             uid, rid = event['uid'], event['router']
             if rid not in self.config['routers']:
@@ -435,6 +544,8 @@ class Bot:
         router = self.config['routers'][rid]
         data = self.router_call(uid, rid, 'xtlsbot-v1 status', epoch)
         locations = self.router_call(uid, rid, 'xtlsbot-v1 locations', epoch)
+        if isinstance(data.get('subscription'), dict):
+            self.store.cache_subscription(rid, data['subscription'])
         names = [str(n.get('name', 'Локация'))[:120] for n in locations.get('nodes', [])
                  if n.get('id') in data.get('selected', [])]
         mode = 'Автовыбор' if data.get('mode') == 'auto' else 'Ручной'
@@ -443,14 +554,61 @@ class Bot:
         health = {True: 'успешна', False: 'ошибка', None: 'нет данных'}.get(data.get('proxy_ok'), 'нет данных')
         text = (f"{self.router_label(rid)}\nПрокси: {running}\nРежим: {mode}\n"
                 f"Локация: {', '.join(names) or 'нет данных'}\n"
-                f"Последняя проверка прокси: {health}\nВерсия: {str(data.get('version', '—'))[:40]}")
+                f"Последняя проверка прокси: {health}\nВерсия: {str(data.get('version', '—'))[:40]}" +
+                '\n\n' + self.subscription_text(data.get('subscription')))
         rows = [[self.button(uid, rid, '🌍 Локации', 'locations'),
                  self.button(uid, rid, '🔄 Статус', 'status')],
-                [self.button(uid, rid, '⚡ Автовыбор', 'auto')]]
+                [self.button(uid, rid, '⚡ Автовыбор', 'auto'),
+                 self.button(uid, rid, '🩺 Диагностика', 'diagnostics')]]
         if uid == self.config['admin_id']:
-            rows.append([self.button(uid, rid, '👥 Доступ клиентов', 'access')])
+            rows.append([self.button(uid, rid, '👥 Доступ клиентов', 'access'),
+                         self.button(uid, rid, '🔔 Мониторинг', 'monitor')])
         rows.append([self.button(uid, rid, '🏠 Мои роутеры', 'menu')])
         self.send_router(uid, rid, text, rows, epoch)
+
+    @staticmethod
+    def subscription_text(data):
+        if not isinstance(data, dict):
+            return 'Карточка подписки: требуется обновить SSH-обработчик роутера.'
+        if not data.get('available'):
+            return 'Подписка: нет сохранённых данных.'
+        sid = str(data.get('id', ''))
+        title = 'Подписка xtlsproVPN' + (' · №' + sid if re.fullmatch(r'[0-9]{1,12}', sid) else '')
+        def stamp(value):
+            try:
+                if type(value) not in (int, float) or value <= 0:
+                    return 'нет данных'
+                return datetime.fromtimestamp(value, timezone(timedelta(hours=3))).strftime('%d.%m.%Y %H:%M МСК')
+            except (ValueError, OverflowError, OSError):
+                return 'нет данных'
+        def volume(value):
+            return f'{value / 1024**3:.1f} ГиБ' if type(value) in (int, float) and 0 <= value < 2**53 else 'нет данных'
+        expire = data.get('expire')
+        until = stamp(expire)
+        if type(expire) in (int, float) and expire > 0:
+            until += ' · ' + (str(math.ceil((expire-time.time())/86400)) + ' дн.' if expire > time.time() else 'истекла')
+        total = 'безлимит' if data.get('unlimited') is True else volume(data.get('total'))
+        return (title + '\nОбновлена: ' + stamp(data.get('updated')) +
+                '\nДействует до: ' + until + '\nТрафик: ' + volume(data.get('used')) + ' / ' + total +
+                '\nПо данным последнего обновления подписки.')
+
+    def diagnostics(self, uid, rid, epoch=None):
+        data = self.router_call(uid, rid, 'xtlsbot-v1 diagnostics', epoch)
+        def mib(value):
+            return f'{value / 1024**2:.1f} МиБ' if type(value) in (int, float) and value >= 0 else 'нет данных'
+        def yes(value):
+            return 'да' if value is True else 'нет' if value is False else 'нет данных'
+        text = (self.router_label(rid) + ' · Диагностика\n' +
+                'Xray работает: ' + yes(data.get('running')) +
+                '\nСетевой интерфейс поднят: ' + yes(data.get('interface_up')) +
+                '\nПерехват трафика активен: ' + yes(data.get('interception_active')) +
+                '\nДоступная RAM: ' + mib(data.get('memory_available')) +
+                '\nRAM процесса Xray: ' + mib(data.get('rss')) +
+                '\nПоследняя HTTPS-проверка успешна: ' + yes(data.get('proxy_ok')) +
+                '\nЭто снимок состояния; новые сетевые проверки не запускались.')
+        self.send_router(uid, rid, text, [[self.button(uid, rid, '🔄 Обновить', 'diagnostics')],
+                         [self.button(uid, rid, '← Статус', 'status'),
+                          self.button(uid, rid, '🏠 Мои роутеры', 'menu')]], epoch)
 
     def locations(self, uid, rid, epoch=None):
         self.authorize(uid, rid)
@@ -548,7 +706,7 @@ class Bot:
         self.store.cancel_confirmations(uid, rid)
         self.store.set_dialog(uid, rid)
         text = ('Добавить клиента к ' + self.router_label(rid) +
-                '\nОтправьте ID клиента вида U-000001 или числовой Telegram ID.'
+                '\nОтправьте числовой Telegram ID клиента. Номер подписки не используется для выдачи доступа.'
                 '\nКлиент видит свой ID при первом запуске бота.'
                 '\nПосле ввода появится подтверждение. Ожидание — 10 минут.')
         self.send(uid, text, [[self.button(uid, rid, 'Отмена', 'access')]])
@@ -645,6 +803,14 @@ class Bot:
                 self.submit_read(uid, rid, 'status', epoch)
             elif action == 'locations':
                 self.submit_read(uid, rid, 'locations', epoch)
+            elif action == 'diagnostics':
+                self.submit_read(uid, rid, 'diagnostics', epoch)
+            elif action == 'monitor':
+                self.monitor_menu(uid, rid)
+            elif action in ('monitor_on', 'monitor_off'):
+                self.admin(uid)
+                self.store.monitor_enable(rid, action == 'monitor_on')
+                self.monitor_menu(uid, rid)
             elif action == 'access':
                 self.access(uid, rid)
             elif action == 'grant_input':
@@ -686,6 +852,7 @@ class Bot:
             raise SafeError('Токен принадлежит другому боту.')
         if self.tg.call('getWebhookInfo').get('url'):
             raise SafeError('У бота настроен webhook. Автоматически отключать его запрещено.')
+        threading.Thread(target=self.monitor_loop, name='router-monitor', daemon=True).start()
         LOG.info('pilot started routers=%d', len(self.config['routers']))
         while True:
             try:

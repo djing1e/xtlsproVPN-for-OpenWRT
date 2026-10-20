@@ -43,7 +43,24 @@ else:sys.exit(1)
     def test_status_only_exports_whitelist(self):
         d=self.call('xtlsbot-v1 status')['data']
         self.assertTrue(d['running']);self.assertEqual(d['selected'],['cfg123456'])
-        self.assertEqual(set(d),{'version','enabled','running','mode','selected','proxy_ok','health_checked','operation_busy','job'})
+        self.assertEqual(set(d),{'version','enabled','running','mode','selected','proxy_ok','health_checked','operation_busy','subscription','job'})
+    def test_subscription_only_numeric_id_dates_and_counters(self):
+        self.fixture['subscription']={'announce':'id: 4242','title':'SECRET-TITLE',
+            'url':'SECRET-URL','available':True,'updated':100,'expire':200,
+            'traffic':{'used':123,'total':None,'unlimited':True,'nested':'SECRET-EXTRA'}}
+        sub=self.call('xtlsbot-v1 status')['data']['subscription']
+        self.assertEqual(sub['id'],'4242');self.assertEqual(sub['used'],123)
+        self.assertTrue(sub['unlimited']);self.assertNotIn('title',sub)
+        for raw in ['id: 4242 https://SECRET-URL', 'SECRET-URL', 'id: 4242\nSECRET-URL']:
+            self.fixture['subscription']['announce']=raw
+            self.assertIsNone(self.call('xtlsbot-v1 status')['data']['subscription']['id'])
+    def test_diagnostics_exports_no_addresses_routes_or_config(self):
+        self.fixture.update({'uptime':123,'memory':{'total':1024,'available':512},
+            'interface':{'up':True,'address':'SECRET-LAN'},'interception':{'active':True},
+            'diagnostics_summary':{'errors':0,'pending':0,'raw':'SECRET-LOG'}})
+        d=self.call('xtlsbot-v1 diagnostics')['data']
+        self.assertEqual(d['uptime'],123);self.assertTrue(d['interface_up'])
+        self.assertEqual(d['errors'],0)
     def test_locations_never_fall_back_to_endpoint(self):
         nodes=self.call('xtlsbot-v1 locations')['data']['nodes']
         self.assertEqual([n['name'] for n in nodes],['Finland','Location 2'])

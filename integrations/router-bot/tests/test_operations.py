@@ -33,7 +33,7 @@ class OperationsTests(unittest.TestCase):
         code, _ = self.store.user_info(CLIENT, 'Customer')
         self.bot.access_prompt(UID, 'lab', code, True)
         text = self.messages()[-1]
-        self.assertIn(code, text)
+        self.assertIn('Customer', text)
         self.assertIn(str(CLIENT), text)
         self.assertIn('R-000001', text)
         self.assertIsNone(self.store.grant_epoch(CLIENT, 'lab'))

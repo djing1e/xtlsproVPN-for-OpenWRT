@@ -194,3 +194,21 @@ offsite copies before treating recovery as complete. NetBird registration, VPS
 OS, firewall and CrowdSec are outside this bot backup. See RECOVERY.md for the
 new-VPS process. A restored bot stays stopped until NetBird is ready and the old
 poller is stopped. Existing bot installations are never overwritten by restore.
+
+
+## Subscription display and operational status
+
+The optional router bridge now adds a strictly filtered subscription card to
+status and a read-only diagnostics snapshot. The bot shows the subscription's
+numeric customer number, timestamps and traffic without receiving the URL,
+raw title/announcement or other metadata. Telegram sender ID remains the access
+identity; the subscription number is a display/business identifier, not a grant.
+
+Administrator monitoring can be enabled per router from its status card. It
+checks SSH availability and distinct fresh cached HTTPS probe results. Three
+consecutive failures produce a notice; recovery produces one recovery notice.
+Monitoring is off until explicitly enabled, never restarts services and does not
+replace the router's existing guard. New capabilities and the remaining gates
+for LAB emergency transport, administrative recovery, reboot and updates are
+specified in OPERATIONS.md. Do not advertise those privileged operations as
+implemented until their transport and acceptance checks have passed.
