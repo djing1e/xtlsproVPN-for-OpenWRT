@@ -2,7 +2,7 @@ name: xtlsproVPN ARM64 package (development)
 on:
   workflow_dispatch:
   push:
-    branches: ['main', 'fix/safe-subscription-apply', 'feature/netbird-admin', 'feature/package-ui', 'feature/low-memory-sync', 'feature/router-admin-updates', 'feature/netbird-recovery', 'feature/router-bot']
+    branches: ['main', 'fix/safe-subscription-apply', 'feature/netbird-admin', 'feature/package-ui', 'feature/low-memory-sync', 'feature/router-admin-updates', 'feature/netbird-recovery', 'feature/router-bot', 'feature/wrapper-guard']
     tags: ['v1.0.0*']
     paths-ignore:
       - 'README.md'
@@ -46,6 +46,7 @@ jobs:
           python3 scripts/check-source.py
           python3 -m unittest discover -s tests -p 'test_netbird.py'
           python3 -m unittest discover -s tests -p 'test_netbird_guard.py'
+          python3 -m unittest discover -s tests -p 'test_wrapper_guard_adopt.py'
           python3 -m unittest discover -s tests -p 'test_rescue.py'
           node tests/test_rescue_ui.js
           python3 -m unittest discover -s tests -p 'test_dns_probe.py'

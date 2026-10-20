@@ -98,6 +98,18 @@ class GuardWorker(unittest.TestCase):
 
     def calls(self):return [json.loads(x) for x in (self.r/'calls').read_text().splitlines()]
 
+    def test_explicit_legacy_wrapper_observed_and_recovered_without_reenrollment(self):
+        cfg=json.loads(self.cfg.read_text());cfg['xray_lab_netbird']['main']['service']='netbird-wrapper';self.cfg.write_text(json.dumps(cfg))
+        wrapper=self.r/'bin/service-wrapper'
+        wrapper.write_text('#!/bin/sh\nprintf used > "$TEST_ROOT/wrapper-used"\nexec "$TEST_ROOT/bin/service" "$@"\n');wrapper.chmod(0o755)
+        before=self.cfg.read_bytes()
+        self.assertEqual(self.tick('healthy',{'started':0})['reason'],'healthy')
+        self.assertTrue((self.r/'wrapper-used').exists())
+        value=self.tick('disconnected',{'started':0,'failure_since':100,'failures':3})
+        self.assertEqual(value['action'],'restart');self.assertTrue(value['command_ok'])
+        self.assertEqual(self.cfg.read_bytes(),before)
+        self.assertFalse(any(row[0]=='netbird' and row[1:2] in [['up'],['down']] for row in self.calls()))
+
     def test_worker_classifies_and_recovers_without_mutating_config(self):
         original=self.cfg.read_bytes()
         for scenario,reason in [('healthy','healthy'),('idle','manual_down'),('auth','authentication_required'),

@@ -5,7 +5,9 @@ import { guard_decide } from '/usr/share/xray/lab/netbird_guard_policy.mjs';
 
 const RUN='/var/run/xtlspro-netbird';
 const BIN='/usr/bin/netbird';
-const SERVICE='/etc/init.d/netbird';
+// Explicit service binding preserves legacy procd wrappers without guessing.
+const SERVICE=cursor().get_all('xray_lab_netbird','main')?.service=='netbird-wrapper' ?
+    '/etc/init.d/netbird-wrapper' : '/etc/init.d/netbird';
 function quote(v) {return "'"+replace(''+v,/'/g,"'\\''")+"'";}
 function capture(args,seconds) {
     let p=fs.popen(join(' ',map(['timeout','-k','2',''+seconds,...args],quote))+' 2>/dev/null','r');
