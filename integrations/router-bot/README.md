@@ -230,3 +230,10 @@ allocates a restricted per-router relay account/port and checks both SSH paths
 before committing the registry. Existing LAB adoption preserves its router key,
 R-code and client grants. See [ONBOARDING.md](ONBOARDING.md) for operator commands,
 rollback, archive compatibility and VPS migration limits.
+
+## LAB acceptance for 1.4.0-r1
+
+The package, enrollment, idempotent adoption, primary/rescue return, reboot and
+in-place helper refresh have been exercised on LAB. See
+[the dated validation record](../../docs/router-bot-validation-2026-10-20.md)
+for evidence, VPS-side fixes and the precise limits of physical acceptance.
