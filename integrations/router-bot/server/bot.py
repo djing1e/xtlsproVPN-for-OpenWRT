@@ -23,6 +23,9 @@ JOB = re.compile(r'[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\Z')
 
 class SafeError(Exception):
     """Only fixed, safe messages may reach the user or journal."""
+    def __init__(self, message, code=None):
+        super().__init__(message)
+        self.code = code
 
 
 class Telegram:
@@ -40,6 +43,8 @@ class Telegram:
             if not result.get('ok'):
                 raise SafeError('Telegram отклонил запрос.')
             return result['result']
+        except urllib.error.HTTPError as error:
+            raise SafeError('Telegram отклонил запрос.', error.code) from None
         except (OSError, ValueError, urllib.error.URLError):
             # urllib exceptions include the token-bearing URL. Never log them.
             raise SafeError('Telegram временно недоступен.') from None
@@ -66,6 +71,14 @@ class Store:
                 CREATE TABLE IF NOT EXISTS grants (
                     uid INTEGER, router TEXT, epoch TEXT NOT NULL, created INTEGER,
                     PRIMARY KEY(uid,router));
+                CREATE TABLE IF NOT EXISTS router_ids (
+                    seq INTEGER PRIMARY KEY AUTOINCREMENT, router TEXT UNIQUE NOT NULL);
+                CREATE TABLE IF NOT EXISTS user_ids (
+                    seq INTEGER PRIMARY KEY AUTOINCREMENT, uid INTEGER UNIQUE NOT NULL,
+                    name TEXT NOT NULL DEFAULT '');
+                CREATE TABLE IF NOT EXISTS notifications (
+                    id INTEGER PRIMARY KEY, uid INTEGER, router TEXT, granted INTEGER,
+                    epoch TEXT, state TEXT DEFAULT 'pending', retry_at INTEGER DEFAULT 0);
                 CREATE TABLE IF NOT EXISTS input_dialogs (
                     uid INTEGER PRIMARY KEY, router TEXT, expires INTEGER);
                 CREATE TABLE IF NOT EXISTS access_audit (
@@ -112,8 +125,7 @@ class Store:
                              (token, uid, int(time.time()))).fetchone()
             if row is None:
                 raise SafeError('Кнопка устарела или уже использована. Откройте /start.')
-            if row['action'] in ('select', 'auto', 'grant', 'revoke'):
-                db.execute('UPDATE buttons SET used=1 WHERE token=?', (token,))
+            db.execute('UPDATE buttons SET used=1 WHERE token=?', (token,))
             return dict(row)
 
     def begin(self, update_id, uid, router, action, target):
@@ -127,6 +139,42 @@ class Store:
             db.execute('UPDATE operations SET state=?,job=coalesce(?,job) WHERE update_id=?',
                        (state, job, update_id))
 
+
+    def router_code(self, rid):
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            if not db.execute('SELECT 1 FROM router_ids WHERE router=?', (rid,)).fetchone():
+                db.execute('INSERT INTO router_ids(router) VALUES (?)', (rid,))
+            seq = db.execute('SELECT seq FROM router_ids WHERE router=?', (rid,)).fetchone()[0]
+            return f'R-{seq:06d}'
+
+    def resolve_user(self, text):
+        if re.fullmatch(r'U-[0-9]{6,}', text):
+            with self.connect() as db:
+                row = db.execute('SELECT uid FROM user_ids WHERE seq=?', (int(text[2:]),)).fetchone()
+                if row:
+                    return str(row[0])
+            raise SafeError('Пользователь с таким ID не найден.')
+        return text
+
+    def user_info(self, uid, name=None):
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            if not db.execute('SELECT 1 FROM user_ids WHERE uid=?', (uid,)).fetchone():
+                db.execute('INSERT INTO user_ids(uid) VALUES (?)', (uid,))
+            if name is not None:
+                clean = ''.join(c for c in name if c.isprintable())[:100]
+                db.execute('UPDATE user_ids SET name=? WHERE uid=?', (clean, uid))
+            row = db.execute('SELECT seq,name FROM user_ids WHERE uid=?', (uid,)).fetchone()
+            return f'U-{row[0]:06d}', row[1]
+
+    def pending_notifications(self):
+        with self.connect() as db:
+            return [dict(row) for row in db.execute("SELECT * FROM notifications WHERE state='pending' AND retry_at<=? ORDER BY id LIMIT 5", (int(time.time()),))]
+
+    def notification_state(self, event_id, state, retry_at=0):
+        with self.connect() as db:
+            db.execute('UPDATE notifications SET state=?,retry_at=? WHERE id=?', (state, retry_at, event_id))
 
     def set_dialog(self, uid, rid):
         with self.connect() as db:
@@ -171,6 +219,10 @@ class Store:
                 db.execute('DELETE FROM buttons WHERE uid=? AND router=?', (uid, rid))
             db.execute('INSERT INTO access_audit(actor,uid,router,action,created) VALUES (?,?,?,?,?)',
                        (actor, uid, rid, 'grant' if grant else 'revoke', int(time.time())))
+            if changed:
+                row = db.execute('SELECT epoch FROM grants WHERE uid=? AND router=?', (uid, rid)).fetchone()
+                db.execute('INSERT INTO notifications(uid,router,granted,epoch) VALUES (?,?,?,?)',
+                           (uid, rid, int(grant), row[0] if row else None))
             return bool(changed)
 
 
@@ -249,6 +301,74 @@ class Bot:
         self.pool = concurrent.futures.ThreadPoolExecutor(max_workers=3)
         self.locks = {rid: threading.Lock() for rid in config['routers']}
         self.policy_lock = threading.RLock()
+        self.read_guard = threading.Lock()
+        self.read_busy = set()
+        for rid in sorted(config['routers']):
+            self.store.router_code(rid)
+
+    def router_label(self, rid):
+        return self.store.router_code(rid) + ' · ' + self.config['routers'][rid]['name']
+
+    def user_label(self, uid):
+        code, name = self.store.user_info(uid)
+        return code + (' · ' + name if name else '') + ' · Telegram ID ' + str(uid)
+
+    def identity(self, uid):
+        return 'Ваш ID: ' + self.store.user_info(uid)[0] + '\nTelegram ID: ' + str(uid)
+
+    def submit_read(self, uid, rid, action, epoch):
+        with self.read_guard:
+            if uid in self.read_busy:
+                return
+            self.read_busy.add(uid)
+        def work():
+            try:
+                (self.status if action == 'status' else self.locations)(uid, rid, epoch)
+            except SafeError as error:
+                self.inform(uid, str(error))
+            except Exception:
+                LOG.error('read request failed')
+                self.inform(uid, 'Не удалось получить состояние роутера.')
+            finally:
+                with self.read_guard:
+                    self.read_busy.discard(uid)
+        try:
+            self.pool.submit(work)
+        except Exception:
+            with self.read_guard:
+                self.read_busy.discard(uid)
+            raise
+
+    def deliver_notifications(self):
+        for event in self.store.pending_notifications():
+            uid, rid = event['uid'], event['router']
+            if rid not in self.config['routers']:
+                self.store.notification_state(event['id'], 'superseded')
+                continue
+            with self.policy_lock:
+                current = self.store.grant_epoch(uid, rid)
+                if (event['granted'] and current != event['epoch']) or (not event['granted'] and current is not None):
+                    self.store.notification_state(event['id'], 'superseded')
+                    continue
+                payload = {'chat_id': uid}
+                if event['granted']:
+                    payload['text'] = '✅ Доступ выдан: ' + self.router_label(rid)
+                    payload['reply_markup'] = {'inline_keyboard': [[self.button(uid, rid, 'Открыть роутер', 'status')]]}
+                else:
+                    payload['text'] = 'Доступ отозван: ' + self.router_label(rid)
+                    remaining = sorted(self.visible(uid))
+                    if remaining:
+                        payload['reply_markup'] = {'inline_keyboard': [[self.button(uid, remaining[0], 'Мои роутеры', 'menu')]]}
+                try:
+                    self.tg.call('sendMessage', **payload)
+                    self.store.notification_state(event['id'], 'delivered')
+                except SafeError as error:
+                    if error.code in (400, 403):
+                        self.store.notification_state(event['id'], 'blocked')
+                        self.send(self.config['admin_id'], 'Уведомление не доставлено: ' + self.user_label(uid) +
+                                  '. Клиент должен открыть бот или снять блокировку. Привязка сохранена.')
+                    else:
+                        self.store.notification_state(event['id'], 'pending', int(time.time()) + 30)
 
     def admin(self, uid):
         if type(uid) is not int or uid != self.config['admin_id']:
@@ -302,7 +422,7 @@ class Bot:
         return {'text': text, 'callback_data': self.store.button(uid, rid, action, target, epoch)}
 
     def menu(self, uid):
-        rows = [[self.button(uid, rid, router['name'], 'status')]
+        rows = [[self.button(uid, rid, self.router_label(rid), 'status')]
                 for rid, router in self.config['routers'].items() if rid in self.visible(uid)]
         if rows:
             first = next(rid for rid in self.config['routers'] if rid in self.visible(uid))
@@ -321,7 +441,7 @@ class Bot:
         running = 'работает' if data.get('running') else 'остановлен'
         # Cached health is explicitly labelled; selection success isn't a new probe.
         health = {True: 'успешна', False: 'ошибка', None: 'нет данных'}.get(data.get('proxy_ok'), 'нет данных')
-        text = (f"{router['name']}\nПрокси: {running}\nРежим: {mode}\n"
+        text = (f"{self.router_label(rid)}\nПрокси: {running}\nРежим: {mode}\n"
                 f"Локация: {', '.join(names) or 'нет данных'}\n"
                 f"Последняя проверка прокси: {health}\nВерсия: {str(data.get('version', '—'))[:40]}")
         rows = [[self.button(uid, rid, '🌍 Локации', 'locations'),
@@ -344,7 +464,7 @@ class Bot:
         rows.append([self.button(uid, rid, '⚡ Автовыбор', 'auto')])
         rows.append([self.button(uid, rid, '← Статус', 'status'),
                      self.button(uid, rid, '🏠 Мои роутеры', 'menu')])
-        self.send_router(uid, rid, self.config['routers'][rid]['name'] + ' · Выберите локацию:', rows, epoch)
+        self.send_router(uid, rid, self.router_label(rid) + ' · Выберите локацию:', rows, epoch)
 
     def switch(self, uid, rid, action, target, update_id, epoch=None):
         job_id = None
@@ -392,13 +512,13 @@ class Bot:
         self.store.clear_dialog(uid)
         self.store.cancel_confirmations(uid, rid)
         clients = self.store.clients(rid)
-        lines = [self.config['routers'][rid]['name'] + ' · Доступ клиентов',
+        lines = [self.router_label(rid) + ' · Доступ клиентов',
                  'ID роутера: ' + rid]
-        lines.extend('• Telegram ID ' + str(client) for client in clients[:40])
+        lines.extend('• ' + self.user_label(client) for client in clients[:40])
         if not clients:
             lines.append('Клиенты пока не привязаны.')
         lines.append('Добавьте клиента или выберите, чей доступ отозвать.')
-        rows = [[self.button(uid, rid, 'Отозвать ' + str(client), 'revoke_prompt', str(client))]
+        rows = [[self.button(uid, rid, 'Отозвать ' + self.store.user_info(client)[0], 'revoke_prompt', str(client))]
                 for client in clients[:40]]
         rows.insert(0, [self.button(uid, rid, '➕ Добавить клиента', 'grant_input')])
         rows.append([self.button(uid, rid, '← Статус', 'status'),
@@ -408,13 +528,14 @@ class Bot:
     def access_prompt(self, uid, rid, target, grant):
         self.admin(uid)
         self.authorize(uid, rid)
+        target = self.store.resolve_user(target)
         if not re.fullmatch(r'[1-9][0-9]{0,15}', target) or not 0 < int(target) < 2**52:
             raise SafeError('Укажите числовой Telegram ID клиента.')
         if int(target) == self.config['admin_id']:
             raise SafeError('Администратор уже имеет доступ ко всем роутерам.')
         verb = 'Выдать' if grant else 'Отозвать'
-        text = (verb + ' доступ к ' + self.config['routers'][rid]['name'] +
-                ' для Telegram ID ' + target + '?')
+        text = (verb + ' доступ к ' + self.router_label(rid) +
+                ' для ' + self.user_label(int(target)) + '?')
         if not grant:
             text += '\nУже принятое роутером задание может завершиться.'
         rows = [[self.button(uid, rid, 'Подтвердить', 'grant' if grant else 'revoke', target)],
@@ -426,8 +547,8 @@ class Bot:
         self.authorize(uid, rid)
         self.store.cancel_confirmations(uid, rid)
         self.store.set_dialog(uid, rid)
-        text = ('Добавить клиента к ' + self.config['routers'][rid]['name'] +
-                '\nОтправьте следующим сообщением числовой Telegram ID клиента.'
+        text = ('Добавить клиента к ' + self.router_label(rid) +
+                '\nОтправьте ID клиента вида U-000001 или числовой Telegram ID.'
                 '\nКлиент видит свой ID при первом запуске бота.'
                 '\nПосле ввода появится подтверждение. Ожидание — 10 минут.')
         self.send(uid, text, [[self.button(uid, rid, 'Отмена', 'access')]])
@@ -470,11 +591,13 @@ class Bot:
             if callback:
                 self.tg.call('answerCallbackQuery', callback_query_id=callback['id'], text='Только в личном чате.')
             return
+        sender = (callback or message).get('from', {})
+        self.store.user_info(uid, ' '.join(str(sender.get(k, '')) for k in ('first_name', 'last_name')).strip() or None)
         if not self.visible(uid):
             if callback:
                 self.tg.call('answerCallbackQuery', callback_query_id=callback['id'], text='Доступ запрещён.')
             else:
-                self.inform(uid, 'xtlsproVPN · Управление роутером\nВаш Telegram ID: ' + str(uid) +
+                self.inform(uid, 'xtlsproVPN · Управление роутером\n' + self.identity(uid) +
                             '\nДоступ к роутеру пока не выдан. Передайте этот ID администратору.')
             return
         try:
@@ -486,7 +609,7 @@ class Bot:
                     self.store.clear_dialog(uid)
                 elif text == '/whoami':
                     self.store.clear_dialog(uid)
-                    self.inform(uid, 'Ваш Telegram ID: ' + str(uid))
+                    self.inform(uid, self.identity(uid))
                 elif text == '/help':
                     self.store.clear_dialog(uid)
                     self.help(uid)
@@ -497,8 +620,17 @@ class Bot:
                     self.store.clear_dialog(uid)
                     self.menu(uid)
                 return
-            self.tg.call('answerCallbackQuery', callback_query_id=callback['id'])
-            button = self.store.take_button(callback.get('data'), uid)
+            with self.read_guard:
+                busy = uid in self.read_busy
+            if busy:
+                self.tg.call('answerCallbackQuery', callback_query_id=callback['id'], text='Запрос обрабатывается…')
+                return
+            try:
+                button = self.store.take_button(callback.get('data'), uid)
+            except SafeError:
+                self.tg.call('answerCallbackQuery', callback_query_id=callback['id'], text='Кнопка уже использована или устарела.')
+                return
+            self.tg.call('answerCallbackQuery', callback_query_id=callback['id'], text='Обрабатываем…')
             rid, action, target = button['router'], button['action'], button['target']
             epoch = button['grant_epoch']
             self.authorize(uid, rid, epoch)
@@ -508,11 +640,11 @@ class Bot:
             elif action == 'help':
                 self.help(uid)
             elif action == 'whoami':
-                self.inform(uid, 'Ваш Telegram ID: ' + str(uid))
+                self.inform(uid, self.identity(uid))
             elif action == 'status':
-                self.status(uid, rid, epoch)
+                self.submit_read(uid, rid, 'status', epoch)
             elif action == 'locations':
-                self.locations(uid, rid, epoch)
+                self.submit_read(uid, rid, 'locations', epoch)
             elif action == 'access':
                 self.access(uid, rid)
             elif action == 'grant_input':
@@ -529,6 +661,7 @@ class Bot:
                     self.store.change_access(uid, int(target), rid, action == 'grant')
                 self.send(uid, 'Доступ выдан.' if action == 'grant' else 'Доступ отозван. Старые кнопки клиента недействительны.')
                 self.access(uid, rid)
+                self.deliver_notifications()
             elif action in ('select', 'auto'):
                 if not self.locks[rid].acquire(blocking=False):
                     raise SafeError('Операция уже выполняется. Дождитесь результата.')
@@ -556,7 +689,8 @@ class Bot:
         LOG.info('pilot started routers=%d', len(self.config['routers']))
         while True:
             try:
-                updates = self.tg.call('getUpdates', offset=self.store.offset(), timeout=25,
+                self.deliver_notifications()
+                updates = self.tg.call('getUpdates', offset=self.store.offset(), timeout=10,
                                        allowed_updates=['message', 'callback_query'], limit=20)
                 for update in updates:
                     # Persist before handling: a crash may lose a request, never replay it.

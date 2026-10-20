@@ -23,7 +23,7 @@ class ButtonFlowTests(unittest.TestCase):
         for method, payload in reversed(self.tg.calls):
             for row in payload.get('reply_markup', {}).get('inline_keyboard', []):
                 for button in row:
-                    if button['text'] == text:
+                    if button['text'] == text or button['text'].endswith(' · ' + text):
                         return button['callback_data']
         self.fail('Button missing: ' + text)
 

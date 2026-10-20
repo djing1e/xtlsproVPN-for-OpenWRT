@@ -94,8 +94,7 @@ class AccessTests(unittest.TestCase):
         before = len(self.store.clients('lab'))
         self.bot.handle(self.callback(token, update_id=99))
         self.assertEqual(len(self.store.clients('lab')), before)
-        # No unsolicited message is sent to the newly enrolled customer.
-        self.assertTrue(all(p.get('chat_id') != CLIENT for m, p in self.tg.calls if m == 'sendMessage'))
+        self.assertTrue(any(p.get('chat_id') == CLIENT and 'Доступ выдан' in p.get('text', '') for m, p in self.tg.calls if m == 'sendMessage'))
 
     def test_client_cannot_reuse_admin_confirmation(self):
         self.grant()

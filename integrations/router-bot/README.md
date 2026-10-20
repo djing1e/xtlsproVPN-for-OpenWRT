@@ -106,8 +106,9 @@ The administrator uses `/bind ROUTER_ID TELEGRAM_ID`; the bot shows the exact
 router/name and numeric ID and requires a single-use confirmation. `/unbind`
 uses the same confirmation flow. `/access ROUTER_ID` (or the administrator-only
 router access button) lists grants and offers revocation buttons. `/help` lists
-configured router IDs for the administrator. No unsolicited enrollment messages
-are sent to customers; they reopen /start after approval.
+configured router IDs for the administrator. Access changes enqueue a customer notification, including an Open router button
+after approval. Telegram delivery failures are retained/reported; clients who
+never opened or blocked the bot must open/unblock it first.
 
 Clients can view status/locations and select a location or auto on their assigned
 routers only. They cannot list grants, issue/revoke grants or use administrator
@@ -151,3 +152,45 @@ for that router. Clients cannot start this dialog even through forged callbacks.
 Only the final single-use confirmation changes grants. Existing grants, audit,
 SSH policy and job semantics are unchanged. Client enrollment/revocation was
 reported working by the operator before this button-navigation refinement.
+
+
+## Notifications, IDs and repeated clicks
+
+Router codes R-000001 and user codes U-000001 are immutable local registry IDs,
+independent of model/name. They survive database backup/restore. Existing config
+router keys remain permanent routing identities; never recycle a key for a
+different physical router. SSH host-key pinning remains the actual endpoint
+verification. Display codes never authorize a user. User profiles are captured
+from private-chat sender data; confirmations include display code/name and exact
+Telegram numeric ID. Enrollment input accepts U-codes or Telegram numeric IDs.
+
+Grant/revoke changes atomically enqueue notifications in SQLite. Approval sends
+an Open router button. Undeliverable messages (chat not started/blocked) notify
+the administrator without undoing the grant. Transient errors retry. Superseded
+access events are not delivered as current grants. Outbox delivery is at least
+once: an ambiguous Telegram timeout may produce a duplicate notice on retry.
+
+All callback receipts are single-use, including read buttons. Used/expired
+receipts get a callback toast rather than a new chat message or SSH request.
+Router reads execute in a bounded worker pool with one pending read per user;
+repeat clicks while that read is pending are acknowledged as processing. Existing
+per-router mutation locks and generation checks remain. A deliberate new menu
+provides fresh buttons after each completed read; old buttons cannot replay work.
+
+## Portable backups
+
+`server/backup.py install` creates a random root-only backup.key outside archives,
+installs a daily systemd timer (03:15 server time, up to 15 minute jitter), and
+keeps the latest 14 verified encrypted archives under /var/backups/xtls-router-bot.
+`create` takes a consistent online SQLite backup, packages app/config/token/SSH
+identity/pinned hosts/unit, encrypts with GnuPG AES256, decrypts and verifies the
+archive before publishing or rotating copies. Plaintext staging uses /run.
+The archive and separately saved backup.key are both required for restoration.
+
+Download archives regularly to a separate machine/storage and keep the key
+separately. Local automatic backups alone do not survive VPS loss. This version
+does not upload copies to Telegram or an external cloud. Operator must arrange
+offsite copies before treating recovery as complete. NetBird registration, VPS
+OS, firewall and CrowdSec are outside this bot backup. See RECOVERY.md for the
+new-VPS process. A restored bot stays stopped until NetBird is ready and the old
+poller is stopped. Existing bot installations are never overwritten by restore.

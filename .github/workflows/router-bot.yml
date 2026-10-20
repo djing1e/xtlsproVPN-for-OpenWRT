@@ -22,7 +22,7 @@ jobs:
       - name: Build pinned host ucode for controller tests
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake build-essential pkg-config libjson-c-dev
+          sudo apt-get install -y cmake build-essential pkg-config libjson-c-dev gnupg
           cmake -S .host-src/ucode -B .host-build/ucode \
             -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/ucode" -DCMAKE_INSTALL_LIBDIR=lib \
             -DUCI_SUPPORT=OFF -DUBUS_SUPPORT=OFF -DULOOP_SUPPORT=OFF \
