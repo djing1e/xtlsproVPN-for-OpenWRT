@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 """Encrypted, verified, portable bot backup. Key is deliberately outside archive."""
 import argparse
+import fcntl
 from datetime import datetime, timezone
 import hashlib
 import io
@@ -8,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import pwd
+import re
 import secrets
 import shutil
 import sqlite3
@@ -15,6 +17,9 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import urllib.error
+import urllib.request
+from zoneinfo import ZoneInfo
 
 APP = 'opt/xtls-router-bot/'
 CONF = 'etc/xtls-router-bot/'
@@ -37,10 +42,17 @@ OPTIONAL_FILES = {APP + 'fleet.py': 0o644, APP + 'connect.py': 0o644,
 OPERATOR_FILES={APP+'operator_client.py',APP+'operator_worker.py','etc/systemd/system/xtls-router-bot-operator.service','etc/systemd/system/xtls-router-bot-operator.path'}
 ALL_FILES = {**FILES, **OPTIONAL_FILES}
 SERVICE = '''[Unit]
-Description=Encrypted xtlsproVPN bot backup
+Description=Encrypted xtlsproVPN bot backup to Telegram
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=1h
+StartLimitBurst=6
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/python3 /opt/xtls-router-bot/backup.py create
+ExecStart=/usr/bin/python3 /opt/xtls-router-bot/backup.py deliver
+Restart=on-failure
+RestartSec=5min
+TimeoutStartSec=10min
 UMask=0077
 PrivateTmp=yes
 NoNewPrivileges=yes
@@ -48,8 +60,9 @@ NoNewPrivileges=yes
 TIMER = '''[Unit]
 Description=Daily encrypted xtlsproVPN bot backup
 [Timer]
-OnCalendar=*-*-* 03:15:00
-RandomizedDelaySec=15m
+OnCalendar=*-*-* 12:00:00 Europe/Moscow
+AccuracySec=1s
+RandomizedDelaySec=0
 Persistent=true
 [Install]
 WantedBy=timers.target
@@ -210,6 +223,103 @@ def create(root=Path('/'), stage_base=Path('/run')):
         return final
 
 
+
+def delivery_state(path, value):
+    fd, temporary = tempfile.mkstemp(prefix='.telegram-', dir=path.parent)
+    try:
+        with os.fdopen(fd, 'w') as stream:
+            json.dump(value, stream)
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def send_archive(archive, token, admin, digest, day):
+    size = archive.stat().st_size
+    if not 0 < size <= 49_000_000:
+        raise BackupError('Архив превышает допустимый размер отправки в Telegram.')
+    boundary = 'xtls-backup-' + secrets.token_hex(24)
+    caption = ('xtlsproVPN · резервная копия · ' + day + ' МСК\n'
+               'Архив зашифрован и проверен.\nSHA256: ' + digest +
+               '\nКлюч расшифровки хранится отдельно и не отправляется.')
+    parts = []
+    for name, value in [('chat_id', str(admin)), ('caption', caption)]:
+        parts.append(('--' + boundary + '\r\nContent-Disposition: form-data; name="' +
+                      name + '"\r\n\r\n' + value + '\r\n').encode())
+    parts.append(('--' + boundary + '\r\nContent-Disposition: form-data; name="document"; filename="' +
+                  archive.name + '"\r\nContent-Type: application/octet-stream\r\n\r\n').encode())
+    parts.extend([archive.read_bytes(), ('\r\n--' + boundary + '--\r\n').encode()])
+    request = urllib.request.Request('https://api.telegram.org/bot' + token + '/sendDocument',
+        data=b''.join(parts), headers={'Content-Type': 'multipart/form-data; boundary=' + boundary})
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(request, timeout=90) as response:
+            reply = json.loads(response.read(1_000_001))
+    except (OSError, ValueError, urllib.error.URLError):
+        # Exceptions/URLs may contain the token. Never print the original error.
+        raise BackupError('Отправка копии не подтверждена. Архив сохранён; служба повторит попытку.') from None
+    result = reply.get('result') if isinstance(reply, dict) else None
+    chat = result.get('chat') if isinstance(result, dict) else None
+    document = result.get('document') if isinstance(result, dict) else None
+    if (not isinstance(reply, dict) or reply.get('ok') is not True or not isinstance(result, dict) or
+            not isinstance(chat, dict) or chat.get('id') != admin or
+            type(result.get('message_id')) is not int or result['message_id'] <= 0 or
+            not isinstance(document, dict) or not isinstance(document.get('file_id'), str)):
+        raise BackupError('Telegram не подтвердил доставку архива администратору.')
+    return result['message_id']
+
+
+def deliver(root=Path('/'), stage_base=Path('/run')):
+    config = json.loads(root_path(root, CONF + 'config.json').read_text())
+    admin = config.get('admin_id')
+    token = root_path(root, CONF + 'telegram_token').read_text().strip()
+    if type(admin) is not int or not 0 < admin < 2**52 or not re.fullmatch(r'[0-9]{5,16}:[A-Za-z0-9_-]{20,128}', token):
+        raise BackupError('Некорректный Telegram ID администратора или токен бота.')
+    out = root_path(root, 'var/backups/xtls-router-bot')
+    out.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(out, 0o700)
+    receipt = root_path(root, 'var/backups/xtls-router-bot/.telegram-delivery.json')
+    lock = root_path(root, 'run/xtls-router-backup-delivery.lock')
+    with lock.open('a') as stream:
+        os.chmod(lock, 0o600)
+        try:
+            fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise BackupError('Отправка резервной копии уже выполняется.') from None
+        day = datetime.now(ZoneInfo('Europe/Moscow')).date().isoformat()
+        state = {}
+        if receipt.exists():
+            try:
+                state = json.loads(receipt.read_text())
+                if not isinstance(state, dict): raise ValueError()
+            except (OSError, ValueError):
+                raise BackupError('Журнал доставки повреждён; требуется проверка администратора.') from None
+        current = state.get('day') == day and state.get('admin') == admin and state.get('bot') == sha(token.encode())
+        if current and state.get('state') == 'sent':
+            print('Сегодняшняя копия уже доставлена администратору.')
+            return
+        archive = None
+        if current and state.get('state') == 'pending':
+            name = state.get('archive', '')
+            if not isinstance(name, str) or not re.fullmatch(r'xtls-bot-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{6}\.tar\.gpg', name):
+                raise BackupError('Некорректный архив в журнале доставки.')
+            candidate = root_path(root, 'var/backups/xtls-router-bot/' + name)
+            if candidate.is_file():
+                if sha(candidate.read_bytes()) != state.get('sha256'):
+                    raise BackupError('Контрольная сумма ожидающего отправки архива не совпала.')
+                archive = candidate
+        if archive is None:
+            archive = create(root, stage_base)
+            state = {'day': day, 'admin': admin, 'bot': sha(token.encode()), 'state': 'pending',
+                     'archive': archive.name, 'sha256': sha(archive.read_bytes())}
+            delivery_state(receipt, state)
+        message = send_archive(archive, token, admin, state['sha256'], day)
+        state.update(state='sent', message_id=message)
+        delivery_state(receipt, state)
+        print('Зашифрованная копия доставлена администратору:', archive.name)
+
 def operator_layout(root=Path('/'),activate=True):
     unit=root_path(root,'etc/systemd/system/xtls-router-bot-operator.path')
     if not unit.exists():return
@@ -315,17 +425,17 @@ def apply_restore(directory, key, root=Path('/'), activate=True):
         os.chown(root_path(root, name), user.pw_uid, user.pw_gid)
     shutil.copyfile(key, key_path(root))
     os.chmod(key_path(root), 0o600)
-    install(root, activate=activate)
+    # Restored copies must not start polling, operator jobs or scheduled uploads.
+    install(root, activate=False)
     if activate:
         subprocess.run(['systemctl', 'daemon-reload'], check=True)
-        subprocess.run(['systemctl', 'enable', 'xtls-router-bot'], check=True)
     # Deliberately do not start polling until the previous bot is stopped and
     # this VPS has joined NetBird. NetBird identity is not cloned in this backup.
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=['install', 'create', 'restore'])
+    parser.add_argument('action', choices=['install', 'create', 'deliver', 'restore'])
     parser.add_argument('archive', nargs='?')
     parser.add_argument('--key-file')
     parser.add_argument('--output')
@@ -336,9 +446,11 @@ def main():
     os.umask(0o077)
     if args.action == 'install':
         install()
-        print('Ежедневное копирование включено; сохраняются последние 14 архивов.')
+        print('Ежедневная отправка администратору в 12:00 МСК включена; на VPS сохраняются последние 14 архивов.')
         print('Ключ восстановления:', key_path(Path('/')))
         print('Скачай ключ отдельно от архива и сохрани вне VPS. Без него восстановление невозможно.')
+    elif args.action == 'deliver':
+        deliver()
     elif args.action == 'create':
         print('Проверенная зашифрованная копия:', create())
     else:

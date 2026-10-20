@@ -106,6 +106,18 @@ class BackupTests(unittest.TestCase):
         with self.assertRaises(backup.BackupError):
             backup.apply_restore(recovered, backup.key_path(self.root), new_vps, activate=False)
 
+    def test_fresh_restore_does_not_activate_polling_uploads_or_operator_jobs(self):
+        recovered = self.stage/'no-auto-start-source'
+        for name in backup.FILES:
+            dest = recovered/name
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes((self.root/name).read_bytes())
+        destination = self.stage/'no-auto-start-vps'; destination.mkdir()
+        account = types.SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid())
+        with patch.object(backup.pwd, 'getpwnam', return_value=account), patch.object(backup.subprocess, 'run') as run:
+            backup.apply_restore(recovered, backup.key_path(self.root), destination, activate=True)
+        self.assertEqual([call.args[0] for call in run.call_args_list], [['systemctl', 'daemon-reload']])
+
     def test_restore_under_private_umask_leaves_application_traversable(self):
         recovered = self.stage / 'plain-source'
         for name in backup.FILES:
@@ -183,6 +195,23 @@ class BackupTests(unittest.TestCase):
                         tar.addfile(info, io.BytesIO(body))
             with self.assertRaises(backup.BackupError):
                 backup.read_archive(archive)
+
+    def test_rotation_retains_latest_fourteen_archives_and_delivery_receipt(self):
+        out = self.root/'var/backups/xtls-router-bot'
+        out.mkdir(parents=True)
+        old = []
+        for i in range(16):
+            file = out/('xtls-bot-20200101T000000Z-' + format(i, '06x') + '.tar.gpg')
+            file.write_bytes(b'older-archive')
+            old.append(file)
+        receipt = out/'.telegram-delivery.json'
+        receipt.write_text('{}')
+        latest = backup.create(self.root, self.stage)
+        self.assertEqual(len(list(out.glob('xtls-bot-*.tar.gpg'))), 14)
+        self.assertTrue(latest.is_file())
+        self.assertTrue(receipt.is_file())
+        self.assertFalse(any(file.exists() for file in old[:3]))
+        self.assertTrue(all(file.exists() for file in old[3:]))
 
     def test_install_preserves_existing_recovery_key(self):
         before = backup.key_path(self.root).read_bytes()
