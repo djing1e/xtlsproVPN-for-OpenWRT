@@ -1,0 +1,23 @@
+#!/bin/sh
+set -eu
+umask 077
+base=/usr/share/xray/bot
+[ "$(id -u)" = 0 ] || { echo 'Запусти от root.';exit 1; }
+(cd "$base" && sha256sum -c bundle.sha256 >/dev/null) || { echo 'Повреждён комплект обработчиков бота.';exit 1; }
+case "${1:-}" in
+prepare) [ "$#" = 2 ] || exit 1;exec sh "$base/onboard.sh" "$2" ;;
+status) [ "$#" = 1 ] || exit 1;exec ucode /etc/xtlspro-bot/onboard.uc identity ;;
+refresh)
+    [ -f /etc/xtlspro-bot/profile.json ] || exit 0
+    mkdir -p /var/run/xtlspro-bot-admin /var/run/xtlspro-netbird /var/run/xray-lab-control
+    if [ "${2:-}" = --defer ]; then
+        snapshot=$(mktemp -d /tmp/xtls-bot-bundle.XXXXXX)
+        cp "$base/"* "$snapshot/"
+        if ! ubus call service add "{\"name\":\"xtls_bot_bundle_refresh\",\"instances\":{\"worker\":{\"command\":[\"/bin/sh\",\"$snapshot/refresh.sh\",\"wait\"],\"stdout\":false,\"stderr\":false}}}" >/dev/null; then
+            rm -rf "$snapshot"
+            exit 1
+        fi
+    else exec sh "$base/refresh.sh";fi
+    ;;
+*) echo 'Usage: xray-lab-bot prepare PROFILE.json | status | refresh';exit 1 ;;
+esac

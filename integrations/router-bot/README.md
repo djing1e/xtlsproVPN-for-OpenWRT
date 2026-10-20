@@ -220,3 +220,13 @@ replace the router's existing guard. New capabilities and the remaining gates
 for administrative recovery, reboot and future updates are specified in
 OPERATIONS.md. Recovery/reboot passed live LAB acceptance. Component updates have automated
 coverage and require live catalogue and installation acceptance before rollout.
+
+## Fleet onboarding and packaged router helpers
+
+APK 1.4.0-r1 includes a public router helper bundle without granting access on
+installation. `xray-lab-bot prepare PROFILE.json` creates a persistent device UUID
+and a public enrollment code. The root-only `server/fleet.py` verifies identity,
+allocates a restricted per-router relay account/port and checks both SSH paths
+before committing the registry. Existing LAB adoption preserves its router key,
+R-code and client grants. See [ONBOARDING.md](ONBOARDING.md) for operator commands,
+rollback, archive compatibility and VPS migration limits.

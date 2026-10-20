@@ -55,6 +55,15 @@ class BackupTests(unittest.TestCase):
         self.assertFalse((output / backup.CONF / 'backup.key').exists())
         self.assertEqual(archive.stat().st_mode & 0o777, 0o600)
 
+    def test_optional_fleet_registry_tool_survives_encrypted_restore(self):
+        name=backup.APP+'fleet.py'
+        (self.root/name).write_text('public fleet tool')
+        archive=backup.create(self.root,self.stage)
+        output=self.stage/'fleet-restored'
+        backup.unpack(archive,backup.key_path(self.root),output,self.stage)
+        self.assertEqual((output/name).read_text(),'public fleet tool')
+        self.assertEqual((output/name).stat().st_mode & 0o777,0o644)
+
     def test_apply_into_new_vps_tree_preserves_ids_and_refuses_overwrite(self):
         archive = backup.create(self.root, self.stage)
         recovered = self.stage / 'recovered'

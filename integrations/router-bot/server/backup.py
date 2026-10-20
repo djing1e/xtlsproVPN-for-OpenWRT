@@ -29,6 +29,8 @@ FILES = {
     STATE + 'bot.sqlite3': 0o600,
     'etc/systemd/system/xtls-router-bot.service': 0o644,
 }
+OPTIONAL_FILES = {APP + 'fleet.py': 0o644}
+ALL_FILES = {**FILES, **OPTIONAL_FILES}
 SERVICE = '''[Unit]
 Description=Encrypted xtlsproVPN bot backup
 [Service]
@@ -83,15 +85,17 @@ def gpg(source, dest, key, home, decrypt=False):
 def read_archive(path):
     with tarfile.open(path, 'r:gz') as archive:
         members = archive.getmembers()
-        if len(members) != len(FILES) + 1:
+        if not len(FILES) + 1 <= len(members) <= len(ALL_FILES) + 1:
             raise BackupError('Неожиданный состав архива.')
         data = {}
         for member in members:
-            if (member.name not in FILES and member.name != 'manifest.json') or not member.isfile():
+            if (member.name not in ALL_FILES and member.name != 'manifest.json') or not member.isfile():
                 raise BackupError('Недопустимое имя или тип файла в архиве.')
             if member.name in data or member.size > MAX_FILE:
                 raise BackupError('Повтор файла или превышен размер.')
             data[member.name] = archive.extractfile(member).read(MAX_FILE + 1)
+        if not set(FILES).issubset(data) or 'manifest.json' not in data:
+            raise BackupError('Отсутствует обязательный файл архива.')
         manifest = json.loads(data.pop('manifest.json'))
         if manifest.get('format') != 1 or manifest.get('files') != {n: sha(d) for n, d in data.items()}:
             raise BackupError('Контрольные суммы архива не совпали.')
@@ -146,8 +150,10 @@ def snapshot(root, destination):
                 'known_hosts': '/' + STATE + '.ssh/known_hosts'}
     if any(config.get(k) != v for k, v in expected.items()):
         raise BackupError('Нестандартные пути: резервная копия остановлена.')
-    for name in FILES:
+    for name in ALL_FILES:
         path = root_path(root, name)
+        if name in OPTIONAL_FILES and not path.exists():
+            continue
         if not path.is_file() or path.stat().st_size > MAX_FILE:
             raise BackupError('Отсутствует обязательный файл или превышен размер: ' + name)
         if name == STATE + 'bot.sqlite3':
@@ -173,7 +179,7 @@ def create(root=Path('/'), stage_base=Path('/run')):
         with tarfile.open(plain, 'w:gz') as archive:
             for name, body in data.items():
                 info = tarfile.TarInfo(name)
-                info.size, info.mode = len(body), FILES.get(name, 0o600)
+                info.size, info.mode = len(body), ALL_FILES.get(name, 0o600)
                 archive.addfile(info, io.BytesIO(body))
         encrypted = stage / 'backup.tar.gpg'
         gpg(plain, encrypted, key, stage / 'encrypt')
@@ -236,7 +242,7 @@ def unpack(archive, key, destination, stage_base=Path('/run')):
             file = root_path(destination, name)
             file.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             file.write_bytes(body)
-            os.chmod(file, FILES[name])
+            os.chmod(file, ALL_FILES[name])
         with sqlite3.connect(str(destination / STATE / 'bot.sqlite3')) as db:
             if db.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
                 raise BackupError('Восстановленная база не прошла проверку.')
@@ -256,11 +262,13 @@ def apply_restore(directory, key, root=Path('/'), activate=True):
         subprocess.run(['useradd', '--system', '--user-group', '--home-dir', '/' + STATE.rstrip('/'),
                         '--shell', '/usr/sbin/nologin', 'xtlsrouterbot'], check=True)
         user = pwd.getpwnam('xtlsrouterbot')
-    for name in FILES:
+    for name in ALL_FILES:
+        if name in OPTIONAL_FILES and not (directory / name).exists():
+            continue
         dest = root_path(root, name)
         dest.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
         shutil.copyfile(directory / name, dest)
-        os.chmod(dest, FILES[name])
+        os.chmod(dest, ALL_FILES[name])
     state = root_path(root, STATE)
     os.chown(state, user.pw_uid, user.pw_gid)
     os.chmod(state, 0o750)

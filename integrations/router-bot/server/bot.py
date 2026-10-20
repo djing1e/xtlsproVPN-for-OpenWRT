@@ -418,9 +418,15 @@ def load_config(path):
     if not config.get('routers'):
         raise ValueError('routers')
     rescue_ports = set()
+    device_ids = set()
     for rid, router in config['routers'].items():
         if not re.fullmatch(r'[a-z0-9_-]{1,32}', rid):
             raise ValueError('router id')
+        if 'device_id' in router:
+            device = router['device_id']
+            if not isinstance(device, str) or not JOB.fullmatch(device) or device in device_ids:
+                raise ValueError('duplicate or invalid device id')
+            device_ids.add(device)
         ipaddress.ip_address(router['host'])
         if type(router.get('port')) is not int or not 1 <= router['port'] <= 65535:
             raise ValueError('router port')

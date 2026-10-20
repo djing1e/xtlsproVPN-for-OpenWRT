@@ -5,7 +5,7 @@ fail() { echo "Bridge: $*" >&2; exit 1; }
 [ "$(id -u)" = 0 ] || fail 'Run as root on the test router'
 [ "$#" = 1 ] || fail 'Usage: install.sh PUBLIC_KEY_FILE'
 base=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-for file in "$base/ssh.uc" "$base/ssh-entry" "$base/admin.uc" "$base/admin-worker" "$base/updates.uc" "$base/update-worker" "$1"; do
+for file in "$base/ssh.uc" "$base/ssh-entry" "$base/admin.uc" "$base/admin-worker" "$base/updates.uc" "$base/update-worker" "$base/onboard.uc" "$1"; do
     [ -s "$file" ] || fail "Missing file: $file"
 done
 command -v ucode >/dev/null || fail 'ucode required'
@@ -58,6 +58,8 @@ chmod 600 /etc/xtlspro-bot/admin.uc
 chmod 700 /etc/xtlspro-bot/admin-worker
 cp "$base/updates.uc" /etc/xtlspro-bot/updates.uc
 cp "$base/update-worker" /etc/xtlspro-bot/update-worker
+cp "$base/onboard.uc" /etc/xtlspro-bot/onboard.uc
+chmod 600 /etc/xtlspro-bot/onboard.uc
 chmod 600 /etc/xtlspro-bot/updates.uc
 chmod 700 /etc/xtlspro-bot/update-worker
 cp -p "$native" "$native.new"

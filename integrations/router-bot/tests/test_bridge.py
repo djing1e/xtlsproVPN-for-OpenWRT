@@ -43,15 +43,29 @@ import json,sys,os
 with open(os.environ['BRIDGE_CALLS'],'a') as p:p.write(json.dumps(['updates',*sys.argv[1:]])+'\\n')
 print(json.dumps({'plans':[],'job':{'state':'idle'}} if sys.argv[1:] == ['status'] else {'accepted':True,'id':sys.argv[4],'action':sys.argv[2],'component':sys.argv[3]}))
 ''');updates.chmod(0o700)
-        self.src=self.r/'ssh.uc';self.src.write_text((BASE/'router/ssh.uc').read_text().replace('/usr/bin/xray-lab-control',str(ctl)).replace('/etc/xtlspro-bot/admin-worker',str(admin)).replace('/etc/xtlspro-bot/update-worker',str(updates)))
+        onboard=self.r/'onboard.uc'
+        onboard.write_text("import * as fs from 'fs';printf('%J\\n',{args:ARGV,input:json(fs.stdin.read(4097) || '{}')});")
+        self.onboard=onboard
+        self.src=self.r/'ssh.uc';self.src.write_text((BASE/'router/ssh.uc').read_text().replace('/usr/bin/xray-lab-control',str(ctl)).replace('/etc/xtlspro-bot/admin-worker',str(admin)).replace('/etc/xtlspro-bot/update-worker',str(updates)).replace('/etc/xtlspro-bot/onboard.uc',str(onboard)).replace('/usr/bin/ucode',shutil.which('ucode')))
         self.mods=mods
-    def call(self,cmd,ok=True):
+    def call(self,cmd,ok=True,input_data=None):
         (self.r/'fixture.json').write_text(json.dumps(self.fixture))
-        r=subprocess.run(['ucode','-L',str(self.mods),str(self.src)],env=dict(self.env,SSH_ORIGINAL_COMMAND=cmd),capture_output=True,text=True,timeout=10)
+        r=subprocess.run(['ucode','-L',str(self.mods),str(self.src)],env=dict(self.env,SSH_ORIGINAL_COMMAND=cmd),capture_output=True,text=True,timeout=10,input=input_data)
         self.assertEqual(r.returncode==0,ok,r.stdout+r.stderr)
         self.assertNotIn('SECRET-',r.stdout+r.stderr)
         d=json.loads(r.stdout);self.assertEqual(d['schema'],1);self.assertEqual(d['ok'],ok)
         return d
+    def test_enrollment_closed_commands_and_stdin_quoting(self):
+        self.assertIn('args',self.call('xtlsbot-v1 identity')['data'])
+        value={"label":"a'$(touch /tmp/xtls-injection-never);b"}
+        d=self.call('xtlsbot-v1 enroll-apply '+JOB+' '+JOB,input_data=json.dumps(value))['data']
+        self.assertEqual(d['args'],['apply',JOB,JOB]);self.assertEqual(d['input'],value)
+        self.assertFalse(Path('/tmp/xtls-injection-never').exists())
+        self.assertEqual(self.call('xtlsbot-v1 enroll-commit '+JOB+' '+JOB)['data']['args'],['commit',JOB,JOB])
+    def test_enrollment_rejects_bad_payload_and_command(self):
+        command='xtlsbot-v1 enroll-apply '+JOB+' '+JOB
+        for body in ['[]','not-json','x'*4097]:self.call(command,False,input_data=body)
+        for bad in [command+';id',command+' extra','xtlsbot-v1 enroll-commit bad '+JOB]:self.call(bad,False)
     def test_admin_commands_use_fixed_helper_without_native_selection(self):
         data=self.call('xtlsbot-v1 admin-status')['data']
         self.assertEqual(data['job']['state'],'idle')

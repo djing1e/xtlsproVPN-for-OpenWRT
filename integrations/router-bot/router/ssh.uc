@@ -52,6 +52,28 @@ try {
         let m=match(cmd,/^xtlsbot-v1 admin (netbird|proxy|reboot) ([a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12})$/);
         if(m && m[0]==cmd){op='admin';target=m[1];requested_job=m[2];}
     }
+    if(cmd=='xtlsbot-v1 identity')op='identity';
+    if(op=='identity'){
+        let p=fs.popen('/usr/bin/timeout -k 2 16 /usr/bin/ucode /etc/xtlspro-bot/onboard.uc identity 2>/dev/null','r');
+        if(!p)fail('enrollment_unavailable');let text=p.read(8193),rc=p.close(),d;
+        try{d=json(text || '');}catch(e){fail('enrollment_unavailable');}
+        if(rc!=0 || !object(d) || d.error || length(text || '')>8192)fail('enrollment_unavailable');reply(d);
+    }
+    if(!op){
+        let m=match(cmd,/^xtlsbot-v1 enroll-(apply|commit|rollback) ([a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}) ([a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12})$/);
+        if(m && m[0]==cmd){
+            // popen cannot pass stdin to its child in read mode; stage only this
+            // bounded, validated public enrollment payload, never a shell string.
+            let input=m[1]=='apply'?fs.stdin.read(4097):'{}';
+            if(length(input || '')>4096)fail('invalid_enrollment');
+            let d;try{d=json(input || '');}catch(e){fail('invalid_enrollment');}
+            if(type(d)!='object')fail('invalid_enrollment');
+            let text=sprintf('%J',d),quoted="'"+replace(text,/'/g,"'\\''")+"'";
+            let p=fs.popen("printf '%s' "+quoted+' | /usr/bin/timeout -k 2 25 /usr/bin/ucode /etc/xtlspro-bot/onboard.uc '+m[1]+' '+m[2]+' '+m[4]+' 2>/dev/null','r');
+            if(!p)fail('enrollment_unavailable');text=p.read(8193);let rc=p.close();try{d=json(text || '');}catch(e){fail('enrollment_failed');}
+            if(rc!=0 || !object(d) || d.error || length(text || '')>8192)fail('enrollment_failed');reply(d);
+        }
+    }
     if(cmd=='xtlsbot-v1 updates')op='updates';
     if(!op){
         let m=match(cmd,/^xtlsbot-v1 update-(check|install) (app|xray|netbird) ([a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12})( ([a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}))?$/);
