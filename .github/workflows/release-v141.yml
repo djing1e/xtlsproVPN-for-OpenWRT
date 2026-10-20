@@ -7,6 +7,7 @@ on:
       - 'scripts/publish-v141.sh'
       - 'install.sh'
       - 'update.sh'
+      - 'tests/test_native_catalogue.py'
   workflow_dispatch:
     inputs:
       publish:

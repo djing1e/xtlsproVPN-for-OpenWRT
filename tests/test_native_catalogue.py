@@ -38,7 +38,11 @@ export function cursor(dir) { let data={}; return {
  def generate(self):
   r=subprocess.run(['ucode','-L',str(self.d/'modules'),str(BASE/'files/usr/share/xray/gen_config.uc')],env=self.env,capture_output=True,text=True)
   self.assertEqual(r.returncode,0,r.stderr);c=json.loads(r.stdout)
-  p=self.d/'config.json';p.write_text(r.stdout)
+  checked=copy.deepcopy(c)
+  for field in ('access','error'):
+   if checked.get('log',{}).get(field) not in (None,'','none'):
+    checked['log'][field]=str(self.d/('xray-'+field+'.log'))
+  p=self.d/'config.json';p.write_text(json.dumps(checked))
   check=subprocess.run([XRAY,'run','-test','-c',str(p)],capture_output=True,text=True)
   self.assertEqual(check.returncode,0,check.stdout+check.stderr);return c
  def test_five_named_nodes_and_only_selected_outbounds(self):
