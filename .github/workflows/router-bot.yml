@@ -5,6 +5,12 @@ on:
     paths:
       - 'integrations/router-bot/**'
       - '.github/workflows/router-bot.yml'
+  pull_request:
+    paths:
+      - 'integrations/router-bot/**'
+      - 'package/xtlsprovpn/files/usr/share/xray/lab/**'
+      - 'tests/test_installed_version.py'
+      - '.github/workflows/router-bot.yml'
   workflow_dispatch:
 permissions:
   contents: read
@@ -39,3 +45,8 @@ jobs:
           echo "$RUNNER_TEMP/xtls-tools" >> "$GITHUB_PATH"
       - name: Check SSH command boundary and installer
         run: python3 -m unittest discover -s integrations/router-bot/tests
+      - name: Check installed package version and updater
+        run: |
+          python3 -m unittest discover -s tests -p 'test_installed_version.py'
+          python3 -m unittest discover -s tests -p 'test_package_update.py'
+          python3 scripts/check-source.py

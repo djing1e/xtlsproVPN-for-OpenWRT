@@ -21,6 +21,7 @@ import urllib.request
 
 LOG = logging.getLogger('xtls-router-bot')
 NODE = re.compile(r'cfg[A-Za-z0-9_-]{6}\Z')
+SUPPORT_URL = 'https://t.me/xtlsprosupportbot'
 JOB = re.compile(r'[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\Z')
 
 
@@ -91,6 +92,8 @@ class Store:
                 CREATE TABLE IF NOT EXISTS notifications (
                     id INTEGER PRIMARY KEY, uid INTEGER, router TEXT, granted INTEGER,
                     epoch TEXT, state TEXT DEFAULT 'pending', retry_at INTEGER DEFAULT 0);
+                CREATE TABLE IF NOT EXISTS router_names (
+                    router TEXT PRIMARY KEY, name TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS router_hwids (
                     router TEXT PRIMARY KEY, hwid TEXT, updated INTEGER);
                 CREATE TABLE IF NOT EXISTS operator_dialogs (
@@ -189,6 +192,25 @@ class Store:
             db.execute('UPDATE operations SET state=?,job=coalesce(?,job) WHERE update_id=?',
                        (state, job, update_id))
 
+
+    def router_name(self, rid, fallback):
+        with self.connect() as db:
+            row = db.execute('SELECT name FROM router_names WHERE router=?', (rid,)).fetchone()
+            return row['name'] if row else fallback
+
+    def router_names(self):
+        with self.connect() as db:
+            return dict(db.execute('SELECT router,name FROM router_names'))
+
+    def rename_router(self, actor, rid, name):
+        if (not isinstance(name, str) or not 1 <= len(name) <= 80 or
+                not name.strip() or any(not c.isprintable() for c in name)):
+            raise SafeError('Имя: от 1 до 80 символов, без переводов строк.')
+        with self.connect() as db:
+            db.execute('INSERT INTO router_names(router,name) VALUES (?,?) '
+                       'ON CONFLICT(router) DO UPDATE SET name=excluded.name', (rid, name.strip()))
+            db.execute('INSERT INTO access_audit(actor,uid,router,action,created) VALUES (?,?,?,?,?)',
+                       (actor, actor, rid, 'rename', int(time.time())))
 
     def router_code(self, rid):
         with self.connect() as db:
@@ -516,9 +538,16 @@ class Bot:
         for rid in sorted(config['routers']):
             self.store.router_code(rid)
 
+    @staticmethod
+    def support_button():
+        return {'text': '💬 Техподдержка', 'url': SUPPORT_URL}
+
+    def router_name(self, rid):
+        return self.store.router_name(rid, self.config['routers'][rid]['name'])
+
     def router_label(self, rid):
         hwid=self.store.hwid(rid)
-        return self.config['routers'][rid]['name'] + (' · HWID ' + hwid if hwid else ' · HWID не получен')
+        return self.router_name(rid) + (' · HWID ' + hwid if hwid else ' · HWID не получен')
 
     def user_label(self, uid):
         code, name = self.store.user_info(uid)
@@ -668,9 +697,12 @@ class Bot:
             self.authorize(uid, rid, epoch)
             self.send(uid, text, keyboard)
 
-    def inform(self, uid, text):
+    def inform(self, uid, text, keyboard=None):
         # Public private-chat response: own ID/help only, never router data.
-        self.tg.call('sendMessage', chat_id=uid, text=text[:4000])
+        args = {'chat_id': uid, 'text': text[:4000]}
+        if keyboard is not None:
+            args['reply_markup'] = {'inline_keyboard': keyboard}
+        self.tg.call('sendMessage', **args)
 
     def send(self, uid, text, keyboard=None):
         self.authorize(uid)
@@ -701,20 +733,22 @@ class Bot:
             raise SafeError('Некорректная страница каталога.')
         hwids, numbers = self.store.catalog_metadata()
         needle = self.search_key(query)
-        ordered = sorted(visible, key=lambda r: (self.config['routers'][r]['name'].casefold(), r))
+        aliases = self.store.router_names()
+        names = {rid: aliases.get(rid, self.config['routers'][rid]['name']) for rid in visible}
+        ordered = sorted(visible, key=lambda r: (names[r].casefold(), r))
         found = [rid for rid in ordered if not needle or any(needle in self.search_key(value)
-                 for value in (self.config['routers'][rid]['name'], hwids.get(rid, ''), numbers.get(rid, '')))]
+                 for value in (names[rid], hwids.get(rid, ''), numbers.get(rid, '')))]
         pages = max(1, (len(found) + 9) // 10)
         page = min(page, pages - 1)
         self.store.catalog(uid, query, page)
         first = ordered[0]
         counts = {}
         for rid in ordered:
-            name = self.config['routers'][rid]['name'].casefold()
+            name = names[rid].casefold()
             counts[name] = counts.get(name, 0) + 1
         rows = []
         for rid in found[page * 10:(page + 1) * 10]:
-            name = self.config['routers'][rid]['name']
+            name = names[rid]
             if counts[name.casefold()] > 1:
                 # Real HWID distinguishes repeated names; never invent a hardware ID.
                 suffix = hwids.get(rid) or numbers.get(rid) or rid
@@ -729,6 +763,7 @@ class Bot:
             rows.append(nav)
         rows.append([self.button(uid, first, '🔎 Поиск', 'catalog_search'),
                      self.button(uid, first, '📋 Все роутеры', 'catalog_all')])
+        rows.append([self.support_button()])
         rows.append([self.button(uid, first, '🆔 Мой ID', 'whoami'),
                      self.button(uid, first, 'ℹ️ Помощь', 'help')])
         if uid == self.config['admin_id']:
@@ -757,7 +792,7 @@ class Bot:
         health = {True: 'успешна', False: 'ошибка', None: 'нет данных'}.get(data.get('proxy_ok'), 'нет данных')
         text = (f"{self.router_label(rid)}\nПрокси: {running}\nРежим: {mode}\n"
                 f"Локация: {', '.join(names) or 'нет данных'}\n"
-                f"Последняя проверка прокси: {health}\nВерсия: {str(data.get('version', '—'))[:40]}" +
+                f"Последняя проверка прокси: {health}\nВерсия: {str(data.get('version') or 'нет данных')[:40]}" +
                 '\n\n' + self.subscription_text(data.get('subscription')))
         if uid == self.config['admin_id'] and data.get('_transport'):
             text += '\nКанал управления: ' + ('аварийный SSH' if data['_transport'] == 'rescue' else 'NetBird')
@@ -770,6 +805,7 @@ class Bot:
                          self.button(uid, rid, '📦 Обновления', 'updates')])
             rows.append([self.button(uid, rid, '👥 Доступ клиентов', 'access'),
                          self.button(uid, rid, '🔔 Мониторинг', 'monitor')])
+        rows.append([self.support_button()])
         rows.append([self.button(uid, rid, '🏠 Мои роутеры', 'menu')])
         self.send_router(uid, rid, text, rows, epoch)
 
@@ -876,6 +912,7 @@ class Bot:
         self.authorize(uid, rid)
         self.store.cancel_admin(uid, rid)
         self.send_router(uid, rid, self.router_label(rid) + ' · Администрирование\nОперации могут временно прервать связь.', [
+            [self.button(uid, rid, '✏️ Переименовать', 'rename_prompt')],
             [self.button(uid, rid, '🔧 Восстановить NetBird', 'admin_prompt', 'netbird')],
             [self.button(uid, rid, '🔧 Восстановить прокси', 'admin_prompt', 'proxy')],
             [self.button(uid, rid, '🔄 Перезагрузить роутер', 'admin_prompt', 'reboot')],
@@ -1153,6 +1190,14 @@ class Bot:
 
     def operator_input(self, uid, text, dialog):
         self.admin(uid)
+        if dialog['stage'] == 'rename':
+            rid = dialog['name']
+            self.authorize(uid, rid)
+            self.store.rename_router(uid, rid, text)
+            self.store.operator_dialog(uid, 'clear')
+            self.send(uid, 'Имя сохранено: ' + self.router_name(rid),
+                      [[self.button(uid, rid, '⬅️ Статус', 'status')]])
+            return
         from operator_client import valid_name,router_command
         if dialog['stage']=='name':
             if not valid_name(text):raise SafeError('Имя: от 1 до 80 символов, без переводов строк.')
@@ -1202,9 +1247,9 @@ class Bot:
                      '\n/bind ROUTER_ID TELEGRAM_ID'
                      '\n/unbind ROUTER_ID TELEGRAM_ID'
                      '\n/access ROUTER_ID\nРоутеры:\n' +
-                     '\n'.join(rid + ' — ' + r['name'] for rid, r in self.config['routers'].items()))
+                     '\n'.join(rid + ' — ' + self.router_name(rid) for rid, r in self.config['routers'].items()))
         first = next(rid for rid in self.config['routers'] if rid in self.visible(uid))
-        self.send(uid, text, [[self.button(uid, first, '🏠 Мои роутеры', 'menu')]])
+        self.send(uid, text, [[self.support_button()], [self.button(uid, first, '🏠 Мои роутеры', 'menu')]])
 
     def admin_command(self, uid, text):
         self.admin(uid)
@@ -1236,7 +1281,8 @@ class Bot:
                 self.tg.call('answerCallbackQuery', callback_query_id=callback['id'], text='Доступ запрещён.')
             else:
                 self.inform(uid, 'xtlsproVPN · Управление роутером\n' + self.identity(uid) +
-                            '\nДоступ к роутеру пока не выдан. Передайте этот ID администратору.')
+                            '\nДоступ к роутеру пока не выдан. Передайте этот ID администратору.',
+                            [[self.support_button()]])
             return
         try:
             if not callback:
@@ -1286,7 +1332,12 @@ class Bot:
             self.store.catalog(uid, catalog['query'], catalog['page'])
             self.store.clear_dialog(uid)
             if uid==self.config['admin_id']:self.store.operator_dialog(uid,'clear')
-            if action == 'operator_menu':
+            if action == 'rename_prompt':
+                self.admin(uid)
+                self.store.operator_dialog(uid, 'rename', rid)
+                self.send(uid, 'Введите новое имя роутера (1–80 символов). Ожидание — 15 минут.',
+                          [[self.button(uid, rid, 'Отмена', 'admin_menu')]])
+            elif action == 'operator_menu':
                 self.operator_menu(uid,rid)
             elif action == 'operator_add':
                 self.admin(uid)
