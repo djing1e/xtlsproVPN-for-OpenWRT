@@ -1,0 +1,41 @@
+name: Verify or publish v1.4.1 cumulative release
+on:
+  push:
+    branches: ['main', 'release/v1.4.1']
+    paths:
+      - '.github/workflows/release-v141.yml'
+      - 'scripts/publish-v141.sh'
+      - 'install.sh'
+      - 'update.sh'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish verified cumulative release
+        required: true
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: publish-v141-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check stable installation entry points
+        run: python3 -m unittest discover -s tests -p test_install_links.py
+      - name: Check release promotion safety
+        run: python3 -m unittest discover -s tests -p test_release_v141.py
+      - name: Verify exact SDK artifacts and publish only from main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISH_RELEASE: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || inputs.publish) }}
+        run: bash scripts/publish-v141.sh
