@@ -187,13 +187,38 @@ def verify_identity(config,router,pins,p):
     return actual
 
 
+def shared_relay_homes(path):
+    if path.is_symlink():raise SafeError('Небезопасный каталог аварийных пользователей.')
+    path.mkdir(mode=0o755,exist_ok=True)
+    if path.stat().st_uid!=os.geteuid():raise SafeError('Неверный владелец каталога аварийных пользователей.')
+    # mkdir's mode is filtered by the operator's mandatory umask 077.
+    # Each private home stays protected; users must traverse this shared parent.
+    os.chmod(path,0o755)
+
+
+def enrollment_port(config,account,device_id):
+    saved=SSHD_DIR/('65-xtls-fleet-'+account+'.conf')
+    if not saved.exists():return free_port(config)
+    if saved.is_symlink():raise SafeError('Небезопасный файл ограничений SSH.')
+    body=saved.read_text()
+    ports=re.findall(r'(?m)^    PermitListen 127\.0\.0\.1:([0-9]+)$',body)
+    if len(ports)!=1:raise SafeError('Сохранённый аварийный порт не определён.')
+    port=int(ports[0])
+    if body!=relay_text(account,port):raise SafeError('Ограничения аварийного пользователя отличаются.')
+    try:user=pwd.getpwnam(account)
+    except KeyError:raise SafeError('Сохранённый аварийный пользователь отсутствует.') from None
+    marker=Path(user.pw_dir)/'.xtls-fleet-device'
+    if marker.is_symlink() or not marker.is_file() or marker.read_text().strip()!=device_id:raise SafeError('Аварийный пользователь относится к другому UUID.')
+    if any(r.get('rescue',{}).get('port')==port for r in config['routers'].values()):raise SafeError('Сохранённый аварийный порт уже закреплён в реестре.')
+    return port
+
+
 def relay(account,port,public_key,device_id):
     config=SSHD_DIR/('65-xtls-fleet-'+account+'.conf')
     body=relay_text(account,port)
     created=False
     homes=Path('/var/lib/xtls-router-rescue')
-    if homes.is_symlink():raise SafeError('Небезопасный каталог аварийных пользователей.')
-    homes.mkdir(mode=0o755,exist_ok=True)
+    shared_relay_homes(homes)
     try:user=pwd.getpwnam(account)
     except KeyError:
         command('useradd','--system','--user-group','--create-home','--home-dir','/var/lib/xtls-router-rescue/'+account,'--shell','/usr/sbin/nologin',account)
@@ -249,8 +274,8 @@ def enroll(config,p,requested,name):
     rid,label=choose(config,p,requested,name)
     old=config['routers'].get(rid,{})
     existing=old.get('fleet')
-    port=old['rescue']['port'] if existing else free_port(config)
     account=existing['account'] if existing else 'xtls-r-'+hashlib.sha256(p['device_id'].encode()).hexdigest()[:12]
+    port=old['rescue']['port'] if existing else enrollment_port(config,account,p['device_id'])
     pins=Path(config['known_hosts']);original_pins=pins.read_text();candidate_pins=pinned(original_pins,p,port)
     user=pwd.getpwnam('xtlsrouterbot')
     fd,probe=tempfile.mkstemp(prefix='.fleet-probe-',dir=pins.parent);os.close(fd);probe=Path(probe)

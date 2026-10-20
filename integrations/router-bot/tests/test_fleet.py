@@ -83,6 +83,36 @@ class FleetPlanningTests(unittest.TestCase):
                 f.profile_command(config,'87.239.135.108',62152,output)
                 self.assertEqual(json.loads(output.read_text()),value)
 
+    def test_shared_parent_traversable_under_private_umask(self):
+        with tempfile.TemporaryDirectory() as directory:
+            parent=Path(directory)/'relay-homes'
+            old=os.umask(0o077)
+            try:
+                f.shared_relay_homes(parent)
+                self.assertEqual(parent.stat().st_mode & 0o777,0o755)
+                parent.chmod(0o700)
+                f.shared_relay_homes(parent)
+                self.assertEqual(parent.stat().st_mode & 0o777,0o755)
+            finally:os.umask(old)
+            link=Path(directory)/'link';link.symlink_to(parent)
+            with self.assertRaises(pilot.b.SafeError):f.shared_relay_homes(link)
+
+    def test_retry_reuses_only_uuid_owned_orphan_port(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);home=root/'home';home.mkdir()
+            marker=home/'.xtls-fleet-device';marker.write_text(DEVICE)
+            account='xtls-r-497667c61b7d'
+            (root/('65-xtls-fleet-'+account+'.conf')).write_text(f.relay_text(account,22001))
+            config={'routers':{'lab':{'rescue':{'port':22002}}}}
+            with patch.object(f,'SSHD_DIR',root),patch.object(f.pwd,'getpwnam',return_value=SimpleNamespace(pw_dir=str(home))),patch.object(f,'free_port',return_value=22003) as allocate:
+                self.assertEqual(f.enrollment_port(config,account,DEVICE),22001)
+                allocate.assert_not_called()
+                marker.write_text(PROFILE)
+                with self.assertRaises(pilot.b.SafeError):f.enrollment_port(config,account,DEVICE)
+                marker.write_text(DEVICE)
+                config['routers']['other']={'rescue':{'port':22001}}
+                with self.assertRaises(pilot.b.SafeError):f.enrollment_port(config,account,DEVICE)
+
     def test_allocator_reserves_roster_live_and_orphan_accounts(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);(root/'orphan.conf').write_text('Match User orphan\n    PermitListen 127.0.0.1:22002\n')
@@ -127,7 +157,7 @@ class FleetTransactionTests(unittest.TestCase):
         @contextmanager
         def owner(*args):yield
         original_mkdtemp=tempfile.mkdtemp
-        self.patchers=[patch.object(f,'CONFIG',self.config_path),patch.object(f,'remote',side_effect=remote),patch.object(f,'command',side_effect=cmd),patch.object(f,'relay'),patch.object(f,'free_port',return_value=22003),patch.object(f,'db_owner',owner),patch.object(f.time,'sleep'),patch.object(f.pwd,'getpwnam',return_value=SimpleNamespace(pw_uid=os.getuid(),pw_gid=os.getgid())),patch.object(f.tempfile,'mkdtemp',side_effect=lambda **kw:original_mkdtemp(dir=self.root,prefix='backup.'))]
+        self.patchers=[patch.object(f,'CONFIG',self.config_path),patch.object(f,'remote',side_effect=remote),patch.object(f,'command',side_effect=cmd),patch.object(f,'relay'),patch.object(f,'enrollment_port',return_value=22003),patch.object(f,'db_owner',owner),patch.object(f.time,'sleep'),patch.object(f.pwd,'getpwnam',return_value=SimpleNamespace(pw_uid=os.getuid(),pw_gid=os.getgid())),patch.object(f.tempfile,'mkdtemp',side_effect=lambda **kw:original_mkdtemp(dir=self.root,prefix='backup.'))]
         for p in self.patchers:p.start();self.addCleanup(p.stop)
 
     def test_enroll_and_repeat_preserve_lab_id_grants_and_ports(self):
