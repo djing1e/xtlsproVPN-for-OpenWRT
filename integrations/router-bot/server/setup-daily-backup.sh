@@ -9,7 +9,7 @@ systemctl is-active --quiet xtls-router-bot.service || {
 }
 work=$(mktemp -d /tmp/xtls-daily-backup.XXXXXX)
 trap 'rm -rf "$work"' EXIT
-ref=db375e5cc01fc84daa72833e9394ef91a9a9fe26
+ref=fc3dbef5d3f71113727b090a703015c60e4f5e89
 base="https://raw.githubusercontent.com/djing1e/xtlsproVPN-for-OpenWRT/$ref/integrations/router-bot/server"
 for file in backup.py install-daily-backup.py; do
     curl -fLsS --connect-timeout 10 --max-time 60 "$base/$file" -o "$work/$file"
