@@ -61,6 +61,9 @@ if [ "$1" = launch ]; then
         /etc/init.d/xray_rescue_watch running >/dev/null 2>&1 || fail rescue_required
         [ "$(uci -q get xray_lab_rescue.main.enabled || :)" = 1 ] || fail rescue_required
     fi
+    common_last=$(cat "$RUN/last-mutation" 2>/dev/null || :)
+    case "$common_last" in ''|*[!0-9]*) ;; *) [ "$((now-common_last))" -ge 300 ] || fail cooldown ;; esac
+    printf '%s\n' "$now" > "$RUN/last-mutation"
     state pending
     printf '{"accepted":true,"id":"%s","action":"%s","boot_id":"%s"}\n' "$id" "$action" "$boot" > "$RUN/receipts/$id"
     (trap '' HUP; exec "$0" worker "$action" "$id") </dev/null >"$RUN/job.log" 2>&1 &

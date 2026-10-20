@@ -52,6 +52,25 @@ try {
         let m=match(cmd,/^xtlsbot-v1 admin (netbird|proxy|reboot) ([a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12})$/);
         if(m && m[0]==cmd){op='admin';target=m[1];requested_job=m[2];}
     }
+    if(cmd=='xtlsbot-v1 updates')op='updates';
+    if(!op){
+        let m=match(cmd,/^xtlsbot-v1 update-(check|install) (app|xray|netbird) ([a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12})( ([a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}))?$/);
+        if(m && m[0]==cmd && (m[1]=='check' && !m[5] || m[1]=='install' && m[6])){
+            let args='launch '+m[1]+' '+m[2]+' '+m[3]+' '+(m[6] || m[3]);
+            let p=fs.popen('/usr/bin/timeout -k 2 12 /etc/xtlspro-bot/update-worker '+args+' 2>/dev/null','r');
+            if(!p)fail('updates_unavailable');
+            let text=p.read(32769),rc=p.close(),d;try{d=json(text || '');}catch(e){fail('updates_unavailable');}
+            if(!object(d) || length(text || '')>32768)fail('updates_unavailable');
+            if(d.error)fail(index(['busy','cooldown','plan_expired','installed_changed'],d.error)>=0?d.error:'update_rejected');
+            if(rc!=0)fail('update_rejected');reply(d);
+        }
+    }
+    if(op=='updates'){
+        let p=fs.popen('/usr/bin/timeout -k 2 12 /etc/xtlspro-bot/update-worker status 2>/dev/null','r');
+        if(!p)fail('updates_unavailable');let text=p.read(32769),rc=p.close(),d;
+        try{d=json(text || '');}catch(e){fail('updates_unavailable');}
+        if(rc!=0 || !object(d) || length(text || '')>32768)fail('updates_unavailable');reply(d);
+    }
     if(!op)fail('unsupported_command');
     if(op=='admin' || op=='admin-status' || op=='admin-open-rescue'){
         let args=op=='admin-status'?'status':op=='admin-open-rescue'?'open-rescue':'launch '+target+' '+requested_job;

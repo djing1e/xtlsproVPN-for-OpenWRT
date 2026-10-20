@@ -5,7 +5,7 @@ fail() { echo "Bridge: $*" >&2; exit 1; }
 [ "$(id -u)" = 0 ] || fail 'Run as root on the test router'
 [ "$#" = 1 ] || fail 'Usage: install.sh PUBLIC_KEY_FILE'
 base=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-for file in "$base/ssh.uc" "$base/ssh-entry" "$base/admin.uc" "$base/admin-worker" "$1"; do
+for file in "$base/ssh.uc" "$base/ssh-entry" "$base/admin.uc" "$base/admin-worker" "$base/updates.uc" "$base/update-worker" "$1"; do
     [ -s "$file" ] || fail "Missing file: $file"
 done
 command -v ucode >/dev/null || fail 'ucode required'
@@ -30,12 +30,20 @@ if [ -f "$auth" ] && grep -Fq "$material" "$auth"; then
 fi
 sh -n "$base/ssh-entry"
 sh -n "$base/admin-worker"
+sh -n "$base/update-worker"
+native=/usr/share/xray/lab/netbird.uc
+[ -f "$native" ] && [ ! -L "$native" ] || fail 'Native NetBird helper required'
+stage=$(mktemp -d /tmp/xtls-bot-install.XXXXXX)
+trap 'rm -rf "$stage"' EXIT
+ucode "$base/updates.uc" patch-netbird "$native" "$stage/netbird.uc"
+ucode -c -o "$stage/native.ucb" "$stage/netbird.uc"
 backup=$(mktemp -d /root/xtls-before-bot-bridge.XXXXXX)
 if [ -f "$auth" ]; then
     cp -p "$auth" "$backup/authorized_keys"
 else
     : > "$backup/authorized_keys.absent"
 fi
+cp -p "$native" "$backup/netbird.uc"
 if [ -d /etc/xtlspro-bot ]; then cp -R /etc/xtlspro-bot "$backup/bridge"; fi
 mkdir -p /etc/xtlspro-bot
 chmod 700 /etc/xtlspro-bot
@@ -48,6 +56,13 @@ cp "$base/admin.uc" /etc/xtlspro-bot/admin.uc
 cp "$base/admin-worker" /etc/xtlspro-bot/admin-worker
 chmod 600 /etc/xtlspro-bot/admin.uc
 chmod 700 /etc/xtlspro-bot/admin-worker
+cp "$base/updates.uc" /etc/xtlspro-bot/updates.uc
+cp "$base/update-worker" /etc/xtlspro-bot/update-worker
+chmod 600 /etc/xtlspro-bot/updates.uc
+chmod 700 /etc/xtlspro-bot/update-worker
+cp -p "$native" "$native.new"
+cat "$stage/netbird.uc" > "$native.new"
+mv "$native.new" "$native"
 mv /etc/xtlspro-bot/ssh.uc.new /etc/xtlspro-bot/ssh.uc
 mv /etc/xtlspro-bot/ssh-entry.new /etc/xtlspro-bot/ssh-entry
 if ! grep -Fxq "$entry" "$auth" 2>/dev/null; then

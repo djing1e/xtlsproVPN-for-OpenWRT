@@ -125,7 +125,7 @@ class Store:
             now = int(time.time())
             db.execute('DELETE FROM buttons WHERE expires < ?', (now,))
             db.execute('INSERT INTO buttons(token,uid,router,action,target,expires,grant_epoch) VALUES (?,?,?,?,?,?,?)',
-                       (token, uid, router, action, target, now + (120 if action in ('admin_confirm', 'admin_reboot_confirm') else 900), grant_epoch))
+                       (token, uid, router, action, target, now + (120 if action in ('admin_confirm', 'admin_reboot_confirm', 'update_install') else 900), grant_epoch))
         return token
 
     def take_button(self, token, uid):
@@ -150,7 +150,7 @@ class Store:
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             now = int(time.time())
-            if db.execute("SELECT 1 FROM operations WHERE router=? AND action IN ('netbird','proxy','reboot') AND created>?", (router, now - 300)).fetchone():
+            if db.execute("SELECT 1 FROM operations WHERE router=? AND action IN ('netbird','proxy','reboot','update_app','update_xray','update_netbird') AND created>?", (router, now - 300)).fetchone():
                 raise SafeError('После административной операции подождите 5 минут.')
             result = db.execute('INSERT OR IGNORE INTO operations VALUES (?,?,?,?,?,?,NULL,?)',
                                 (update_id, uid, router, action, '', 'running', now))
@@ -158,7 +158,7 @@ class Store:
 
     def cancel_admin(self, uid, rid):
         with self.connect() as db:
-            db.execute("DELETE FROM buttons WHERE uid=? AND router=? AND action IN ('admin_confirm','admin_reboot_confirm')", (uid, rid))
+            db.execute("DELETE FROM buttons WHERE uid=? AND router=? AND action IN ('admin_confirm','admin_reboot_confirm','update_install')", (uid, rid))
 
     def finish(self, update_id, state, job=None):
         with self.connect() as db:
@@ -327,17 +327,19 @@ class Bridge:
         self.config = config
 
     def call(self, router, command, transport=None):
-        allowed = command in ('xtlsbot-v1 status', 'xtlsbot-v1 locations', 'xtlsbot-v1 diagnostics', 'xtlsbot-v1 auto', 'xtlsbot-v1 admin-status', 'xtlsbot-v1 admin-open-rescue')
+        allowed = command in ('xtlsbot-v1 status', 'xtlsbot-v1 locations', 'xtlsbot-v1 diagnostics', 'xtlsbot-v1 auto', 'xtlsbot-v1 admin-status', 'xtlsbot-v1 admin-open-rescue', 'xtlsbot-v1 updates')
         allowed |= bool(re.fullmatch(r'xtlsbot-v1 select cfg[A-Za-z0-9_-]{6}', command))
         allowed |= bool(re.fullmatch(r'xtlsbot-v1 job [a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}', command))
         allowed |= bool(re.fullmatch(r'xtlsbot-v1 admin (netbird|proxy|reboot) [a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}', command))
+        allowed |= bool(re.fullmatch(r'xtlsbot-v1 update-check (app|xray|netbird) [a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}', command))
+        allowed |= bool(re.fullmatch(r'xtlsbot-v1 update-install (app|xray|netbird) [a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12} [a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}', command))
         if not allowed:
             raise SafeError('Недопустимая операция.')
-        readonly = command in ('xtlsbot-v1 status', 'xtlsbot-v1 locations', 'xtlsbot-v1 diagnostics', 'xtlsbot-v1 admin-status') or command.startswith('xtlsbot-v1 job ')
+        readonly = command in ('xtlsbot-v1 status', 'xtlsbot-v1 locations', 'xtlsbot-v1 diagnostics', 'xtlsbot-v1 admin-status', 'xtlsbot-v1 updates') or command.startswith('xtlsbot-v1 job ')
         endpoints = [('netbird', router)]
         if router.get('rescue'):
             endpoints.append(('rescue', router['rescue']))
-        if command.startswith('xtlsbot-v1 admin '):
+        if command.startswith(('xtlsbot-v1 admin ', 'xtlsbot-v1 update-install ')):
             transport = 'rescue'
         if transport is not None:
             if transport not in ('netbird', 'rescue'):
@@ -390,6 +392,9 @@ class Bridge:
                 'rescue_required': 'Для перезагрузки требуется включённый аварийный доступ.',
                 'proxy_autostart_required': 'Для перезагрузки требуется автозапуск прокси.',
                 'proxy_disabled': 'Прокси отключён в настройках роутера.',
+                'updates_unavailable': 'Обновите обработчик обновлений на роутере.',
+                'plan_expired': 'План установки устарел. Проверьте версии заново.',
+                'installed_changed': 'Установленная версия изменилась. Проверьте версии заново.',
                 'admin_unavailable': 'Обновите административный обработчик на роутере.',
                 'unknown_location': 'Список локаций изменился. Откройте его заново.',
                 'job_replaced': 'Задание заменено другой операцией. Проверьте статус.',
@@ -456,14 +461,14 @@ class Bot:
         label = 'Клиент ' + ' / '.join('№' + str(n) for n in numbers) + '\n' if numbers else ''
         return label + 'Telegram ID: ' + str(uid)
 
-    def submit_read(self, uid, rid, action, epoch):
+    def submit_read(self, uid, rid, action, epoch, target=''):
         with self.read_guard:
             if uid in self.read_busy:
                 return
             self.read_busy.add(uid)
         def work():
             try:
-                {'status': self.status, 'locations': self.locations, 'diagnostics': self.diagnostics}[action](uid, rid, epoch)
+                {'status': self.status, 'locations': self.locations, 'diagnostics': self.diagnostics, 'updates': self.updates_menu, 'update_prompt': lambda u, r, e: self.update_prompt(u, r, target)}[action](uid, rid, epoch)
             except SafeError as error:
                 self.inform(uid, str(error))
             except Exception:
@@ -579,7 +584,7 @@ class Bot:
         # already accepted by the router may finish; no subsequent dispatch occurs.
         with self.policy_lock:
             self.authorize(uid, rid, epoch)
-            if command.startswith('xtlsbot-v1 admin'):
+            if command.startswith(('xtlsbot-v1 admin', 'xtlsbot-v1 update')):
                 self.admin(uid)
             if transport is None:
                 result = self.bridge.call(self.config['routers'][rid], command)
@@ -642,7 +647,8 @@ class Bot:
                 [self.button(uid, rid, '⚡ Автовыбор', 'auto'),
                  self.button(uid, rid, '🩺 Диагностика', 'diagnostics')]]
         if uid == self.config['admin_id']:
-            rows.append([self.button(uid, rid, '🛠 Восстановление', 'admin_menu')])
+            rows.append([self.button(uid, rid, '🛠 Восстановление', 'admin_menu'),
+                         self.button(uid, rid, '📦 Обновления', 'updates')])
             rows.append([self.button(uid, rid, '👥 Доступ клиентов', 'access'),
                          self.button(uid, rid, '🔔 Мониторинг', 'monitor')])
         rows.append([self.button(uid, rid, '🏠 Мои роутеры', 'menu')])
@@ -772,31 +778,36 @@ class Bot:
         self.send_router(uid, rid, text, [[self.button(uid, rid, '✅ Подтвердить', button_action, action)],
                                          [self.button(uid, rid, 'Отмена', 'admin_menu')]])
 
+    def prepare_rescue(self, uid, rid):
+        self.admin(uid)
+        try:
+            before = self.router_call(uid, rid, 'xtlsbot-v1 admin-status', transport='rescue')
+            opened = self.router_call(uid, rid, 'xtlsbot-v1 admin-open-rescue', transport='rescue')
+            if opened.get('ok') is not True:
+                raise SafeError('Открытие аварийного канала не подтверждено.')
+        except TransportError:
+            # A live primary path can open the configured reserve for this
+            # explicit admin request. Never reissue an ambiguous open request.
+            opened = self.router_call(uid, rid, 'xtlsbot-v1 admin-open-rescue', transport='netbird')
+            if opened.get('ok') is not True:
+                raise SafeError('Открытие аварийного канала не подтверждено.')
+            self.send_router(uid, rid, 'Открываем настроенный аварийный канал на 30 минут…')
+            ready_deadline = time.monotonic() + 45
+            while True:
+                time.sleep(3)
+                try:
+                    before = self.router_call(uid, rid, 'xtlsbot-v1 admin-status', transport='rescue')
+                    break
+                except TransportError:
+                    if time.monotonic() >= ready_deadline:
+                        raise SafeError('Аварийный канал не открылся. Основная операция не отправлена.') from None
+        return before
+
     def admin_operation(self, uid, rid, action, update_id):
         request = str(uuid.uuid4())
         try:
             self.admin(uid)
-            try:
-                before = self.router_call(uid, rid, 'xtlsbot-v1 admin-status', transport='rescue')
-                opened = self.router_call(uid, rid, 'xtlsbot-v1 admin-open-rescue', transport='rescue')
-                if opened.get('ok') is not True:
-                    raise SafeError('Открытие аварийного канала не подтверждено.')
-            except TransportError:
-                # A live primary path can open the configured reserve for this
-                # explicit admin request. Never reissue an ambiguous open request.
-                opened = self.router_call(uid, rid, 'xtlsbot-v1 admin-open-rescue', transport='netbird')
-                if opened.get('ok') is not True:
-                    raise SafeError('Открытие аварийного канала не подтверждено.')
-                self.send_router(uid, rid, 'Открываем настроенный аварийный канал на 30 минут…')
-                ready_deadline = time.monotonic() + 45
-                while True:
-                    time.sleep(3)
-                    try:
-                        before = self.router_call(uid, rid, 'xtlsbot-v1 admin-status', transport='rescue')
-                        break
-                    except TransportError:
-                        if time.monotonic() >= ready_deadline:
-                            raise SafeError('Аварийный канал не открылся. Основная операция не отправлена.') from None
+            before = self.prepare_rescue(uid, rid)
             boot = before.get('boot_id')
             if not isinstance(boot, str) or not JOB.fullmatch(boot):
                 raise SafeError('Роутер не подтвердил идентификатор загрузки.')
@@ -862,6 +873,97 @@ class Bot:
             self.store.finish(update_id, 'unconfirmed', request)
             LOG.error('admin operation unconfirmed update=%s router=%s', update_id, rid)
             self.inform(uid, 'Результат административной операции не подтверждён. Проверьте статус роутера.')
+        finally:
+            self.locks[rid].release()
+
+    def updates_menu(self, uid, rid, epoch=None):
+        self.admin(uid)
+        self.authorize(uid, rid)
+        self.store.cancel_admin(uid, rid)
+        data = self.router_call(uid, rid, 'xtlsbot-v1 updates')
+        plans = {p.get('component'): p for p in data.get('plans', []) if isinstance(p, dict)}
+        text = self.router_label(rid) + ' · Обновления\nТолько стабильные релизы. Прошивка OpenWrt обновляется отдельно.'
+        rows = []
+        for component, label in (('app', 'Приложение'), ('xray', 'Xray'), ('netbird', 'NetBird')):
+            p = plans.get(component)
+            if p:
+                text += '\n\n' + label + ': ' + str(p.get('installed') or 'нет пакетной версии')[:64]
+                text += '\nДоступно: ' + str(p.get('available') or 'нет данных')[:64]
+                text += ' · ' + ('есть обновление' if p.get('update_available') else 'обновление не требуется')
+                if not p.get('valid'):
+                    text += '\nПроверка устарела — проверьте заново.'
+            else:
+                text += '\n\n' + label + ': проверка ещё не выполнена.'
+            rows.append([self.button(uid, rid, '🔎 Проверить ' + label, 'update_check', component)])
+            if p and p.get('valid') is True and p.get('update_available') is True and isinstance(p.get('id'), str) and JOB.fullmatch(p['id']):
+                rows.append([self.button(uid, rid, '⬆️ Обновить ' + label, 'update_prompt', component + ':' + p['id'])])
+        rows.append([self.button(uid, rid, '⬅️ Статус', 'status')])
+        self.send_router(uid, rid, text, rows)
+
+    def update_prompt(self, uid, rid, target):
+        self.admin(uid)
+        match = re.fullmatch(r'(app|xray|netbird):([a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})', target)
+        if not match:
+            raise SafeError('Недопустимый план обновления.')
+        data = self.router_call(uid, rid, 'xtlsbot-v1 updates')
+        p = next((p for p in data.get('plans', []) if isinstance(p, dict) and p.get('component') == match[1] and p.get('id') == match[2]), None)
+        if not p or p.get('valid') is not True or p.get('update_available') is not True:
+            raise SafeError('План устарел. Откройте обновления и выполните проверку заново.')
+        self.store.cancel_admin(uid, rid)
+        label = {'app': 'Приложение', 'xray': 'Xray', 'netbird': 'NetBird'}[match[1]]
+        self.send_router(uid, rid, self.router_label(rid) + '\n' + label + ': ' + str(p.get('installed'))[:64] + ' → ' + str(p.get('available'))[:64] +
+            '\nУстановить именно эту версию? Связь может временно прерваться.',
+            [[self.button(uid, rid, '✅ Установить', 'update_install', target)],
+             [self.button(uid, rid, 'Отмена', 'updates')]])
+
+    def update_operation(self, uid, rid, component, action, plan, update_id):
+        request = str(uuid.uuid4())
+        try:
+            self.admin(uid)
+            if action == 'install':
+                self.prepare_rescue(uid, rid)
+            self.store.finish(update_id, 'running', request)
+            command = 'xtlsbot-v1 update-' + action + ' ' + component + ' ' + request
+            if action == 'install':
+                command += ' ' + plan
+            receipt = self.router_call(uid, rid, command, transport='rescue' if action == 'install' else None)
+            if receipt.get('accepted') is not True or receipt.get('id') != request or receipt.get('component') != component or receipt.get('action') != action:
+                raise SafeError('Приём задания обновления не подтверждён.')
+            self.send_router(uid, rid, 'Роутер принял задание. ' + ('Проверяем каталог…' if action == 'check' else 'Устанавливаем выбранную версию и проверяем работу…'))
+            deadline = time.monotonic() + (1500 if action == 'install' else 750)
+            while time.monotonic() < deadline:
+                time.sleep(3)
+                try:
+                    data = self.router_call(uid, rid, 'xtlsbot-v1 updates')
+                except SafeError:
+                    continue
+                job = data.get('job', {})
+                if job.get('id') != request or job.get('component') != component or job.get('action') != action:
+                    raise SafeError('Задание обновления заменено или прервано. Проверьте версии.')
+                if job.get('state') in ('pending', 'running'):
+                    continue
+                if job.get('state') != 'done':
+                    raise SafeError('Операция обновления не подтверждена. Проверьте версии и диагностику роутера; повторная установка автоматически не запускается.')
+                if action == 'install':
+                    status = self.router_call(uid, rid, 'xtlsbot-v1 status')
+                    nb = self.router_call(uid, rid, 'xtlsbot-v1 admin-status')
+                    if status.get('proxy_ok') is not True or nb.get('netbird_connected') is not True:
+                        continue
+                    if component == 'netbird':
+                        self.router_call(uid, rid, 'xtlsbot-v1 status', transport='netbird')
+                self.store.finish(update_id, 'done', request)
+                LOG.info('update operation done update=%s router=%s component=%s action=%s', update_id, rid, component, action)
+                self.send_router(uid, rid, 'Проверка версий завершена.' if action == 'check' else 'Выбранная версия установлена. Проверки версии, настроек, HTTPS и DNS пройдены; NetBird подключён.')
+                self.updates_menu(uid, rid)
+                return
+            raise SafeError('Результат обновления не подтверждён за отведённое время. Команда повторно не отправлена; проверьте версии.')
+        except SafeError as error:
+            self.store.finish(update_id, 'unconfirmed', request)
+            self.inform(uid, self.router_label(rid) + '\n' + str(error))
+        except Exception:
+            self.store.finish(update_id, 'unconfirmed', request)
+            LOG.error('update operation unconfirmed update=%s router=%s', update_id, rid)
+            self.inform(uid, 'Результат обновления не подтверждён. Проверьте версии на роутере.')
         finally:
             self.locks[rid].release()
 
@@ -1012,11 +1114,41 @@ class Bot:
                 self.admin(uid)
                 self.store.monitor_enable(rid, action == 'monitor_on')
                 self.monitor_menu(uid, rid)
+            elif action == 'updates':
+                self.admin(uid)
+                self.submit_read(uid, rid, 'updates', epoch)
+            elif action == 'update_prompt':
+                self.admin(uid)
+                self.submit_read(uid, rid, 'update_prompt', epoch, target)
+            elif action in ('update_check', 'update_install'):
+                self.admin(uid)
+                component, plan = target, ''
+                if action == 'update_install':
+                    match = re.fullmatch(r'(app|xray|netbird):([a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})', target)
+                    if not match:
+                        raise SafeError('Недопустимый план обновления.')
+                    component, plan = match.groups()
+                if component not in ('app', 'xray', 'netbird'):
+                    raise SafeError('Недопустимый компонент.')
+                if not self.locks[rid].acquire(blocking=False):
+                    raise SafeError('Операция уже выполняется. Дождитесь результата.')
+                try:
+                    begun = self.store.begin_admin(update['update_id'], uid, rid, 'update_' + component) if action == 'update_install' else self.store.begin(update['update_id'], uid, rid, 'check_' + component, '')
+                    if not begun:
+                        self.locks[rid].release()
+                        return
+                    self.store.cancel_admin(uid, rid)
+                    self.send_router(uid, rid, 'Подготавливаем ' + ('проверку каталога…' if action == 'update_check' else 'установку через аварийный канал…'))
+                    self.pool.submit(self.update_operation, uid, rid, component, 'check' if action == 'update_check' else 'install', plan, update['update_id'])
+                except Exception:
+                    self.store.finish(update['update_id'], 'interrupted')
+                    self.locks[rid].release()
+                    raise
             elif action == 'admin_menu':
                 self.admin_menu(uid, rid)
             elif action == 'admin_prompt':
                 self.admin_prompt(uid, rid, target)
-            elif action in ('admin_confirm', 'admin_reboot_confirm'):
+            elif action in ('admin_confirm', 'admin_reboot_confirm', 'update_install'):
                 self.admin(uid)
                 if target not in ('netbird', 'proxy', 'reboot'):
                     raise SafeError('Недопустимая операция.')

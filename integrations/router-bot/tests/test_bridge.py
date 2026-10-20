@@ -37,7 +37,13 @@ import json,sys,os
 with open(os.environ['BRIDGE_CALLS'],'a') as p:p.write(json.dumps(['admin',*sys.argv[1:]])+'\\n')
 print(json.dumps({'boot_id':'11111111-2222-4333-8444-555555555555','job':{'state':'idle'}} if sys.argv[1:] == ['status'] else {'accepted':True,'id':sys.argv[-1],'action':sys.argv[-2]}))
 ''');admin.chmod(0o700)
-        self.src=self.r/'ssh.uc';self.src.write_text((BASE/'router/ssh.uc').read_text().replace('/usr/bin/xray-lab-control',str(ctl)).replace('/etc/xtlspro-bot/admin-worker',str(admin)))
+        updates=self.r/'updates'
+        updates.write_text('''#!/usr/bin/env python3
+import json,sys,os
+with open(os.environ['BRIDGE_CALLS'],'a') as p:p.write(json.dumps(['updates',*sys.argv[1:]])+'\\n')
+print(json.dumps({'plans':[],'job':{'state':'idle'}} if sys.argv[1:] == ['status'] else {'accepted':True,'id':sys.argv[4],'action':sys.argv[2],'component':sys.argv[3]}))
+''');updates.chmod(0o700)
+        self.src=self.r/'ssh.uc';self.src.write_text((BASE/'router/ssh.uc').read_text().replace('/usr/bin/xray-lab-control',str(ctl)).replace('/etc/xtlspro-bot/admin-worker',str(admin)).replace('/etc/xtlspro-bot/update-worker',str(updates)))
         self.mods=mods
     def call(self,cmd,ok=True):
         (self.r/'fixture.json').write_text(json.dumps(self.fixture))
@@ -54,6 +60,18 @@ print(json.dumps({'boot_id':'11111111-2222-4333-8444-555555555555','job':{'state
         self.assertEqual(json.loads(self.log.read_text().splitlines()[-1]),['admin','launch','netbird',JOB])
     def test_admin_command_injection_never_reaches_helper(self):
         for cmd in ['xtlsbot-v1 admin shell '+JOB, 'xtlsbot-v1 admin reboot '+JOB+';id', 'xtlsbot-v1 admin reboot invalid', 'xtlsbot-v1 admin-status ', 'xtlsbot-v1 admin-open-rescue extra']:
+            self.assertEqual(self.call(cmd,False)['error']['code'],'unsupported_command')
+        self.assertFalse(self.log.exists())
+    def test_update_protocol_binds_component_request_and_plan(self):
+        self.assertEqual(self.call('xtlsbot-v1 updates')['data']['plans'],[])
+        self.call('xtlsbot-v1 update-check app '+JOB)
+        self.assertEqual(json.loads(self.log.read_text().splitlines()[-1]),['updates','launch','check','app',JOB,JOB])
+        plan='00000000-2222-4333-8444-555555555555'
+        data=self.call('xtlsbot-v1 update-install netbird '+JOB+' '+plan)['data']
+        self.assertEqual(data['id'],JOB)
+        self.assertEqual(json.loads(self.log.read_text().splitlines()[-1]),['updates','launch','install','netbird',JOB,plan])
+    def test_bad_update_protocol_never_reaches_helper(self):
+        for cmd in ['xtlsbot-v1 update-install app '+JOB,'xtlsbot-v1 update-check app '+JOB+' '+JOB,'xtlsbot-v1 update-check firmware '+JOB,'xtlsbot-v1 update-install app '+JOB+' https://SECRET-URL','xtlsbot-v1 update-check netbird '+JOB+';id']:
             self.assertEqual(self.call(cmd,False)['error']['code'],'unsupported_command')
         self.assertFalse(self.log.exists())
     def test_status_only_exports_whitelist(self):

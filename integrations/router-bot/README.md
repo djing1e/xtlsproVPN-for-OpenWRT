@@ -23,7 +23,7 @@ settings, but those alone are not a substitute for refusing empty-password
 accounts. Real SSH positive/negative tests remain required before enrollment.
 
 Files live in /etc/xtlspro-bot (root-owned, not writable by the bot): ssh-entry
-and ssh.uc, plus admin.uc and admin-worker for fixed administrative jobs. The forced command is /etc/xtlspro-bot/ssh-entry. A later package or
+and ssh.uc, plus admin.uc/admin-worker and updates.uc/update-worker for fixed administrative jobs. The forced command is /etc/xtlspro-bot/ssh-entry. A later package or
 sysupgrade integration will be needed before claiming firmware-upgrade persistence.
 
 Protocol: exact SSH command strings, JSON schema 1 responses:
@@ -37,6 +37,9 @@ Protocol: exact SSH command strings, JSON schema 1 responses:
 - xtlsbot-v1 admin-status
 - xtlsbot-v1 admin-open-rescue
 - xtlsbot-v1 admin netbird|proxy|reboot UUID
+- xtlsbot-v1 updates
+- xtlsbot-v1 update-check app|xray|netbird UUID
+- xtlsbot-v1 update-install app|xray|netbird UUID PLAN_UUID
 
 The bridge never evaluates the requested command. Other commands, shells,
 subsystems, extra whitespace/arguments and control characters are rejected.
@@ -215,5 +218,5 @@ consecutive failures produce a notice; recovery produces one recovery notice.
 Monitoring is off until explicitly enabled, never restarts services and does not
 replace the router's existing guard. New capabilities and the remaining gates
 for administrative recovery, reboot and future updates are specified in
-OPERATIONS.md. Recovery/reboot now have automated tests and still require live
-LAB acceptance; component updates remain a separate next stage.
+OPERATIONS.md. Recovery/reboot passed live LAB acceptance. Component updates have automated
+coverage and require live catalogue and installation acceptance before rollout.

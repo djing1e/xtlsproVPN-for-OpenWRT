@@ -101,7 +101,7 @@ response is unconfirmed and must never be automatically reissued through the
 other channel. Job polling may switch channels because it is read-only. The
 administrator's status card shows the channel used for its status snapshot.
 
-## Fixed administrative jobs (LAB acceptance pending)
+## Fixed administrative jobs (LAB accepted)
 
 Upgrade the router first using router/upgrade-admin.sh with ssh.uc, admin.uc and
 admin-worker, then update server/bot.py using the existing updater. No APK,
@@ -142,4 +142,54 @@ run proxy recovery and check HTTPS/DNS; wait again and perform the twice-confirm
 reboot while local access is available. Verify the new boot, automatic reconnection,
 retained identity/configuration and a client account's inability to see or invoke
 these actions. Do not roll these new operations out to clients before acceptance.
-Component update installation is not part of this change.
+The component update extension below is a separate acceptance stage.
+
+
+## Component updates (live acceptance pending)
+
+Administrator-only Updates menu has separate check/install actions for application,
+Xray and NetBird. Each completed check creates a private router plan with a boot
+UUID, request UUID, installed/target versions, a 30-minute expiry and an APK digest
+where applicable. Only a whitelist of versions, source and expiry reaches Telegram;
+URLs, subscription configuration, credentials and updater logs never do. Install
+confirmation binds the component and exact plan UUID and expires in two minutes.
+Plans from another component, older boot, changed installed version or stale check
+are rejected. Check actions do not install, restart services or open rescue.
+
+Installation requires actual rescue SSH and a refreshed manual rescue lease, is
+sent only once through that channel and serializes with recovery/reboot/selection.
+A shared five-minute mutation cooldown applies. Requests have per-boot receipts;
+lost replies are unconfirmed, never automatically replayed. The wrapper uses native
+updaters, never arbitrary URLs, firmware updates or broad apk upgrade:
+
+- Application: xray-lab-package check/install, with confirmed version and SHA-256.
+  Native manifest, architecture, size, resource, backup and health checks remain.
+- Xray: xray-lab-core list/install VERSION with FX_CORE_ALLOW_PRERELEASE=0, even
+  if LuCI currently allows prereleases. Native download/checksum/configuration,
+  resource checks and rollback remain; the bot does not bypass low-RAM refusal.
+- NetBird: xray-lab-netbird check_update/update with an additional optional
+  FX_NETBIRD_EXPECTED_VERSION gate after the native signed catalogue refresh.
+  Exact APK version installation and native identity/resource checks remain.
+  Unset environment preserves existing UI behavior; a changed target aborts before
+  package mutation. The wrapper refuses NetBird install without that gate.
+
+Install router files with upgrade-updates.sh, then update bot.py. The installer
+adds only the optional NetBird version gate to the existing helper after checking
+its exact insertion point, compiles candidates, backs up and rolls back helpers
+on a failed probe. Other native code/configuration and authorization keys remain.
+A future APK also carries the optional gate in the packaged netbird.uc source.
+
+Before install the wrapper archives router settings, SSH/rescue/bridge and NetBird
+identity directories privately under /root. It checks hashes of network, DHCP,
+Xray/DNS/NetBird/rescue settings, SSH/rescue keys and untouched component binaries.
+Completion requires native job success, exact installed version, preservation
+checks, active HTTPS and UDP/TCP DNS; the bot additionally verifies NetBird and,
+for its update, primary SSH. A failed proof does not imply that no installation
+occurred: report unconfirmed and inspect versions/native diagnostics. Existing
+native rollback policy remains; the bot does not invent package rollback.
+
+Acceptance: first run all three catalogue checks only, verify current/candidate
+versions and that processes/settings did not change. Review actual releases before
+live installation, one component at a time. An unavailable update must not offer
+installation or force a reinstall. Keep the draft separate from stable rollout
+until at least one suitable live update has completed preservation and health checks.

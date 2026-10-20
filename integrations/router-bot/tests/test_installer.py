@@ -12,9 +12,10 @@ class Installer(unittest.TestCase):
         self.key=self.r/'bot.pub';self.key.write_text(KEY+' bot\n')
         self.shadow=self.r/'shadow';self.shadow.write_text('root:NONEMPTY-TEST-FIXTURE:0:0:99999:7:::\n')
         src=self.r/'source';src.mkdir()
-        for name in ['ssh.uc','ssh-entry','admin.uc','admin-worker']:shutil.copy(BASE/'router'/name,src/name)
+        for name in ['ssh.uc','ssh-entry','admin.uc','admin-worker','updates.uc','update-worker']:shutil.copy(BASE/'router'/name,src/name)
         controller=self.r/'controller';controller.touch();controller.chmod(0o700)
-        text=(BASE/'router/install.sh').read_text().replace('/etc/dropbear/authorized_keys',str(self.auth)).replace('/etc/xtlspro-bot',str(self.r/'deployed')).replace('/root/xtls-before-bot-bridge.',str(self.r/'backup.')).replace('/usr/bin/xray-lab-control',str(controller)).replace('/etc/shadow',str(self.shadow))
+        native=self.r/'native.uc';native.write_text('function f(){\n    let c=package_catalog(true);\n}\n')
+        text=(BASE/'router/install.sh').read_text().replace('/etc/dropbear/authorized_keys',str(self.auth)).replace('/etc/xtlspro-bot',str(self.r/'deployed')).replace('/root/xtls-before-bot-bridge.',str(self.r/'backup.')).replace('/usr/bin/xray-lab-control',str(controller)).replace('/etc/shadow',str(self.shadow)).replace('/usr/share/xray/lab/netbird.uc',str(native))
         self.installer=src/'install.sh';self.installer.write_text(text)
         bins=self.r/'bin';bins.mkdir()
         for name,body in [('id','echo 0'),('chown',':')]:
