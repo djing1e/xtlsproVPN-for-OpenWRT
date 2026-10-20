@@ -100,3 +100,46 @@ status to select a reachable channel, then dispatch exactly once. A lost mutatio
 response is unconfirmed and must never be automatically reissued through the
 other channel. Job polling may switch channels because it is read-only. The
 administrator's status card shows the channel used for its status snapshot.
+
+## Fixed administrative jobs (LAB acceptance pending)
+
+Upgrade the router first using router/upgrade-admin.sh with ssh.uc, admin.uc and
+admin-worker, then update server/bot.py using the existing updater. No APK,
+subscription, router identity or authorization-key replacement is required.
+
+The administrator gets a Restoration menu with NetBird, proxy and reboot.
+Recovery has an explicit target confirmation. Reboot needs an additional second
+confirmation; confirmation tokens expire after two minutes and cancellation
+invalidates them. All administrative callbacks and SSH dispatches recheck the
+administrator role, even if a client somehow obtains a stored button token.
+Local router locks serialize operations with selection; native NetBird and app
+locks exclude concurrent UI/guard/package work. Both the bot's persistent audit
+and the router enforce a five-minute shared cooldown. Per-boot UUID receipts
+prevent a repeated administrative request from reexecuting after cooldown.
+
+Each action requires an actual pinned rescue SSH connection before dispatch. If
+the reserve is closed and NetBird is reachable, the explicit administrator request
+opens the already configured rescue for 30 minutes. The bot never supplies a new
+endpoint/key or changes enrollment. It sends the actual action only over rescue,
+once. An ambiguous response produces an unconfirmed audit result, no replay.
+
+NetBird restarts the enabled native init service or enabled netbird-wrapper;
+it does not call login/up, use a setup key or modify registration/network settings.
+Completion requires the correlated job, Management and Signal connected, plus a
+successful separate SSH request via the primary NetBird address.
+
+Proxy recovery calls the existing controller's asynchronous recover action with
+its native validation and global lock, then verifies active HTTPS health. It
+refuses an intentionally disabled transparent proxy. Reboot additionally requires
+NetBird, Xray and rescue watcher autostart, and a running rescue watcher. A returned
+reboot command is not success. The bot waits for a different valid boot UUID,
+SSH restored, NetBird connected, and a successful proxy health snapshot from the
+new boot. The deadline is five minutes; absence of proof is unconfirmed.
+
+Acceptance order: verify admin-status and unsupported-command rejection through
+rescue; run NetBird recovery and verify primary SSH; wait the five-minute cooldown,
+run proxy recovery and check HTTPS/DNS; wait again and perform the twice-confirmed
+reboot while local access is available. Verify the new boot, automatic reconnection,
+retained identity/configuration and a client account's inability to see or invoke
+these actions. Do not roll these new operations out to clients before acceptance.
+Component update installation is not part of this change.

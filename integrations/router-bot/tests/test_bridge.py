@@ -31,7 +31,13 @@ elif a==['job']:print(json.dumps(f.get('last_job',{'id':'11111111-2222-4333-8444
 elif a[:2]==['launch','select']:print(json.dumps(f.get('launch',{'id':'11111111-2222-4333-8444-555555555555','state':'pending','action':'select'})))
 else:sys.exit(1)
 ''');ctl.chmod(0o700)
-        self.src=self.r/'ssh.uc';self.src.write_text((BASE/'router/ssh.uc').read_text().replace('/usr/bin/xray-lab-control',str(ctl)))
+        admin=self.r/'admin'
+        admin.write_text('''#!/usr/bin/env python3
+import json,sys,os
+with open(os.environ['BRIDGE_CALLS'],'a') as p:p.write(json.dumps(['admin',*sys.argv[1:]])+'\\n')
+print(json.dumps({'boot_id':'11111111-2222-4333-8444-555555555555','job':{'state':'idle'}} if sys.argv[1:] == ['status'] else {'accepted':True,'id':sys.argv[-1],'action':sys.argv[-2]}))
+''');admin.chmod(0o700)
+        self.src=self.r/'ssh.uc';self.src.write_text((BASE/'router/ssh.uc').read_text().replace('/usr/bin/xray-lab-control',str(ctl)).replace('/etc/xtlspro-bot/admin-worker',str(admin)))
         self.mods=mods
     def call(self,cmd,ok=True):
         (self.r/'fixture.json').write_text(json.dumps(self.fixture))
@@ -40,6 +46,16 @@ else:sys.exit(1)
         self.assertNotIn('SECRET-',r.stdout+r.stderr)
         d=json.loads(r.stdout);self.assertEqual(d['schema'],1);self.assertEqual(d['ok'],ok)
         return d
+    def test_admin_commands_use_fixed_helper_without_native_selection(self):
+        data=self.call('xtlsbot-v1 admin-status')['data']
+        self.assertEqual(data['job']['state'],'idle')
+        data=self.call('xtlsbot-v1 admin netbird '+JOB)['data']
+        self.assertTrue(data['accepted'])
+        self.assertEqual(json.loads(self.log.read_text().splitlines()[-1]),['admin','launch','netbird',JOB])
+    def test_admin_command_injection_never_reaches_helper(self):
+        for cmd in ['xtlsbot-v1 admin shell '+JOB, 'xtlsbot-v1 admin reboot '+JOB+';id', 'xtlsbot-v1 admin reboot invalid', 'xtlsbot-v1 admin-status ', 'xtlsbot-v1 admin-open-rescue extra']:
+            self.assertEqual(self.call(cmd,False)['error']['code'],'unsupported_command')
+        self.assertFalse(self.log.exists())
     def test_status_only_exports_whitelist(self):
         d=self.call('xtlsbot-v1 status')['data']
         self.assertTrue(d['running']);self.assertEqual(d['selected'],['cfg123456'])

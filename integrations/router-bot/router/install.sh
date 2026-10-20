@@ -5,7 +5,7 @@ fail() { echo "Bridge: $*" >&2; exit 1; }
 [ "$(id -u)" = 0 ] || fail 'Run as root on the test router'
 [ "$#" = 1 ] || fail 'Usage: install.sh PUBLIC_KEY_FILE'
 base=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-for file in "$base/ssh.uc" "$base/ssh-entry" "$1"; do
+for file in "$base/ssh.uc" "$base/ssh-entry" "$base/admin.uc" "$base/admin-worker" "$1"; do
     [ -s "$file" ] || fail "Missing file: $file"
 done
 command -v ucode >/dev/null || fail 'ucode required'
@@ -29,6 +29,7 @@ if [ -f "$auth" ] && grep -Fq "$material" "$auth"; then
     grep -Fxq "$entry" "$auth" || fail 'This key already exists with different options; inspect it manually'
 fi
 sh -n "$base/ssh-entry"
+sh -n "$base/admin-worker"
 backup=$(mktemp -d /root/xtls-before-bot-bridge.XXXXXX)
 if [ -f "$auth" ]; then
     cp -p "$auth" "$backup/authorized_keys"
@@ -43,6 +44,10 @@ cp "$base/ssh-entry" /etc/xtlspro-bot/ssh-entry.new
 chown root:root /etc/xtlspro-bot /etc/xtlspro-bot/ssh.uc.new /etc/xtlspro-bot/ssh-entry.new
 chmod 600 /etc/xtlspro-bot/ssh.uc.new
 chmod 700 /etc/xtlspro-bot/ssh-entry.new
+cp "$base/admin.uc" /etc/xtlspro-bot/admin.uc
+cp "$base/admin-worker" /etc/xtlspro-bot/admin-worker
+chmod 600 /etc/xtlspro-bot/admin.uc
+chmod 700 /etc/xtlspro-bot/admin-worker
 mv /etc/xtlspro-bot/ssh.uc.new /etc/xtlspro-bot/ssh.uc
 mv /etc/xtlspro-bot/ssh-entry.new /etc/xtlspro-bot/ssh-entry
 if ! grep -Fxq "$entry" "$auth" 2>/dev/null; then

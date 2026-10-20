@@ -37,6 +37,8 @@ try {
     if(cmd=='xtlsbot-v1 status')op='status';
     else if(cmd=='xtlsbot-v1 locations')op='locations';
     else if(cmd=='xtlsbot-v1 diagnostics')op='diagnostics';
+    else if(cmd=='xtlsbot-v1 admin-open-rescue')op='admin-open-rescue';
+    else if(cmd=='xtlsbot-v1 admin-status')op='admin-status';
     else if(cmd=='xtlsbot-v1 auto'){op='select';target='auto';}
     else {
         let m=match(cmd,/^xtlsbot-v1 select (cfg[A-Za-z0-9_-]{6})$/);
@@ -46,7 +48,21 @@ try {
             if(m && m[0]==cmd){op='job';requested_job=m[1];}
         }
     }
+    if(!op){
+        let m=match(cmd,/^xtlsbot-v1 admin (netbird|proxy|reboot) ([a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12})$/);
+        if(m && m[0]==cmd){op='admin';target=m[1];requested_job=m[2];}
+    }
     if(!op)fail('unsupported_command');
+    if(op=='admin' || op=='admin-status' || op=='admin-open-rescue'){
+        let args=op=='admin-status'?'status':op=='admin-open-rescue'?'open-rescue':'launch '+target+' '+requested_job;
+        let p=fs.popen('/usr/bin/timeout -k 2 12 /etc/xtlspro-bot/admin-worker '+args+' 2>/dev/null','r');
+        if(!p)fail('admin_unavailable');
+        let text=p.read(32769),rc=p.close(),d;try{d=json(text || '');}catch(e){fail('admin_unavailable');}
+        if(!object(d) || length(text || '')>32768)fail('admin_unavailable');
+        if(d.error)fail(index(['busy','cooldown','netbird_autostart_required','proxy_disabled','rescue_required','proxy_autostart_required'],d.error)>=0?d.error:'admin_rejected');
+        if(rc!=0)fail('admin_rejected');
+        reply(d);
+    }
     if(op=='job') {
         let d=invoke(['job']);
         if(d.id!=requested_job)fail('job_replaced');

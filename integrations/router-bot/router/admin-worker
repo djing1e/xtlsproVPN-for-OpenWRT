@@ -1,0 +1,117 @@
+#!/bin/sh
+set -eu
+umask 077
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+RUN=/var/run/xtlspro-bot-admin
+UC=/etc/xtlspro-bot/admin.uc
+fail() { printf '{"error":"%s"}\n' "$1"; exit 1; }
+state() { ucode "$UC" set "$id" "$action" "$1" "${2:-}" >/dev/null; }
+nb_service() {
+    if [ -x /etc/init.d/netbird-wrapper ] && /etc/init.d/netbird-wrapper enabled >/dev/null 2>&1; then
+        echo /etc/init.d/netbird-wrapper
+    elif [ -x /etc/init.d/netbird ] && /etc/init.d/netbird enabled >/dev/null 2>&1; then
+        echo /etc/init.d/netbird
+    else return 1; fi
+}
+case "${1:-}" in
+status) [ "$#" = 1 ] || exit 1; exec ucode "$UC" status ;;
+open-rescue)
+    [ "$#" = 1 ] || exit 1
+    printf '%s\n' '{"action":"open"}' | /usr/bin/xray-lab-rescue action
+    exit $?
+    ;;
+launch|worker) [ "$#" = 3 ] || exit 1 ;;
+*) exit 1 ;;
+esac
+action=$2; id=$3
+case "$action" in netbird|proxy|reboot) ;; *) exit 1 ;; esac
+printf '%s\n' "$id" | grep -Eq '^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$' || exit 1
+mkdir -p "$RUN" /var/run/xray-lab-control /var/run/xtlspro-netbird
+chmod 700 "$RUN"
+if [ "$1" = launch ]; then
+    exec 7>"$RUN/action.lock"
+    flock -n 7 || fail busy
+    exec 9>/var/run/xtlspro-netbird/action.lock
+    flock -n 9 || fail busy
+    exec 8>/var/run/xray-lab-control/action.lock
+    flock -n 8 || fail busy
+    boot=$(cat /proc/sys/kernel/random/boot_id)
+    now=$(cut -d. -f1 /proc/uptime)
+    mkdir -p "$RUN/receipts"
+    if [ -f "$RUN/receipts/$id" ]; then
+        [ "$(jsonfilter -i "$RUN/receipts/$id" -e '@.action')" = "$action" ] || fail request_reused
+        cat "$RUN/receipts/$id"
+        exit 0
+    fi
+    previous_boot=$(jsonfilter -i "$RUN/job.json" -e '@.boot_id' 2>/dev/null || :)
+    previous_started=$(jsonfilter -i "$RUN/job.json" -e '@.started' 2>/dev/null || :)
+    case "$previous_started" in ''|*[!0-9]*) ;; *)
+        if [ "$previous_boot" = "$boot" ] && [ "$((now - previous_started))" -lt 300 ]; then fail cooldown; fi ;;
+    esac
+    if [ "$action" = netbird ] || [ "$action" = reboot ]; then
+        nb_service >/dev/null || fail netbird_autostart_required
+    fi
+    if [ "$action" = proxy ]; then
+        [ "$(uci -q get xray_core.general.transparent_proxy_enable || :)" = 1 ] || fail proxy_disabled
+    fi
+    if [ "$action" = reboot ]; then
+        /etc/init.d/xray_core enabled >/dev/null 2>&1 || fail proxy_autostart_required
+        /etc/init.d/xray_rescue_watch enabled >/dev/null 2>&1 || fail rescue_required
+        /etc/init.d/xray_rescue_watch running >/dev/null 2>&1 || fail rescue_required
+        [ "$(uci -q get xray_lab_rescue.main.enabled || :)" = 1 ] || fail rescue_required
+    fi
+    state pending
+    printf '{"accepted":true,"id":"%s","action":"%s","boot_id":"%s"}\n' "$id" "$action" "$boot" > "$RUN/receipts/$id"
+    (trap '' HUP; exec "$0" worker "$action" "$id") </dev/null >"$RUN/job.log" 2>&1 &
+    cat "$RUN/receipts/$id"
+    exit 0
+fi
+# Internal worker requires the launcher's inherited lock descriptors.
+[ -e /proc/self/fd/7 ] && [ -e /proc/self/fd/8 ] && [ -e /proc/self/fd/9 ] || exit 1
+finish() { rc=$?; trap - EXIT; if [ "$rc" = 0 ]; then state done; else state failed operation_failed; fi; exit "$rc"; }
+trap finish EXIT
+trap '' HUP
+trap 'exit 1' INT TERM
+state running
+case "$action" in
+netbird)
+    service=$(nb_service)
+    timeout -k 2 35 "$service" restart 7>&- 8>&- 9>&-
+    for attempt in $(seq 1 18); do
+        timeout -k 1 6 netbird status --json > "$RUN/netbird.json" 2>/dev/null || :
+        if [ "$(jsonfilter -i "$RUN/netbird.json" -e '@.management.connected' 2>/dev/null || :)" = true ] &&
+           [ "$(jsonfilter -i "$RUN/netbird.json" -e '@.signal.connected' 2>/dev/null || :)" = true ]; then exit 0; fi
+        sleep 3
+    done
+    exit 1
+    ;;
+proxy)
+    # The native controller owns its own global lock for validation/recovery.
+    exec 8>&-
+    xray-lab-control launch recover 7>&- 9>&- > "$RUN/proxy-receipt.json"
+    native_id=$(jsonfilter -i "$RUN/proxy-receipt.json" -e '@.id')
+    [ -n "$native_id" ]
+    for attempt in $(seq 1 60); do
+        xray-lab-control job > "$RUN/proxy-job.json"
+        [ "$(jsonfilter -i "$RUN/proxy-job.json" -e '@.id')" = "$native_id" ]
+        native_state=$(jsonfilter -i "$RUN/proxy-job.json" -e '@.state')
+        if [ "$native_state" = done ]; then
+            timeout -k 2 20 ucode /usr/share/xray/lab/control.uc health > "$RUN/health.json"
+            [ "$(jsonfilter -i "$RUN/health.json" -e '@.proxy_ok')" = true ]
+            exit $?
+        fi
+        case "$native_state" in pending|running) ;; *) exit 1 ;; esac
+        sleep 2
+    done
+    exit 1
+    ;;
+reboot)
+    state rebooting
+    sleep 3
+    /sbin/reboot 7>&- 8>&- 9>&-
+    # A returning reboot command is not evidence that the device restarted.
+    sleep 30
+    exit 1
+    ;;
+esac

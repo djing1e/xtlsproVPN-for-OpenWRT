@@ -23,7 +23,7 @@ settings, but those alone are not a substitute for refusing empty-password
 accounts. Real SSH positive/negative tests remain required before enrollment.
 
 Files live in /etc/xtlspro-bot (root-owned, not writable by the bot): ssh-entry
-and ssh.uc. The forced command is /etc/xtlspro-bot/ssh-entry. A later package or
+and ssh.uc, plus admin.uc and admin-worker for fixed administrative jobs. The forced command is /etc/xtlspro-bot/ssh-entry. A later package or
 sysupgrade integration will be needed before claiming firmware-upgrade persistence.
 
 Protocol: exact SSH command strings, JSON schema 1 responses:
@@ -33,6 +33,10 @@ Protocol: exact SSH command strings, JSON schema 1 responses:
 - xtlsbot-v1 select cfgXXXXXX
 - xtlsbot-v1 auto
 - xtlsbot-v1 job UUID
+- xtlsbot-v1 diagnostics
+- xtlsbot-v1 admin-status
+- xtlsbot-v1 admin-open-rescue
+- xtlsbot-v1 admin netbird|proxy|reboot UUID
 
 The bridge never evaluates the requested command. Other commands, shells,
 subsystems, extra whitespace/arguments and control characters are rejected.
@@ -42,13 +46,13 @@ An accepted asynchronous job is not reported as a completed server switch.
 Job polling must match the returned ID; replacement by a later UI operation
 is reported explicitly. The bot must recheck client ownership on every callback.
 
-Only a field whitelist is returned. Subscription metadata, URLs, addresses,
+Only a field whitelist is returned. Raw subscription metadata, URLs, addresses,
 credentials, core config and logs are not exported. Display names come from
 UCI aliases, with a generic fallback rather than the server endpoint.
 
-First stage is a single test router. Administrative recovery commands and
-the emergency VPS transport will be added separately after client selection
-and identity checks are tested. No shared root shell key for client actions.
+Deployment remains a single-router LAB pilot. Administrative recovery requires
+the separately enrolled, pinned emergency transport. Client actions never grant
+a root shell or administrative capabilities.
 
 
 ## Telegram pilot with client access
@@ -66,7 +70,8 @@ configured routers. Clients receive explicit per-router grants in SQLite and
 see only their assigned routers, in private chats. SSH uses the previously
 tested bot key and pinned router host keys. The installer preserves the SSH identity,
 backs up previous application/config/unit, and refuses differing existing config.
-Emergency VPS recovery commands are not implemented yet.
+Fixed administrative operations are available after the router helper upgrade;
+see OPERATIONS.md for their checks and LAB acceptance sequence.
 
 Menu: router status, locations, automatic selection. Health is labelled as the
 last cached check; applying a selection is not itself a fresh health probe.
@@ -209,6 +214,6 @@ checks SSH availability and distinct fresh cached HTTPS probe results. Three
 consecutive failures produce a notice; recovery produces one recovery notice.
 Monitoring is off until explicitly enabled, never restarts services and does not
 replace the router's existing guard. New capabilities and the remaining gates
-for LAB emergency transport, administrative recovery, reboot and updates are
-specified in OPERATIONS.md. Do not advertise those privileged operations as
-implemented until their transport and acceptance checks have passed.
+for administrative recovery, reboot and future updates are specified in
+OPERATIONS.md. Recovery/reboot now have automated tests and still require live
+LAB acceptance; component updates remain a separate next stage.
