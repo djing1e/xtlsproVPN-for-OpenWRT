@@ -204,3 +204,18 @@ class FleetTransactionTests(unittest.TestCase):
         self.assertEqual(self.state['state'],'enrolled')
         self.assertEqual(sum('enroll-apply' in x for x in self.calls),1)
         self.assertIn('device_id',json.loads(self.config_path.read_text())['routers']['lab'])
+
+
+class FleetRemoteBoundaryTests(unittest.TestCase):
+    def test_open_rescue_crosses_real_remote_boundary(self):
+        def run(args,**kwargs):
+            self.assertEqual(args[-1],'xtlsbot-v1 admin-open-rescue')
+            kwargs['stdout'].write(json.dumps({'schema':1,'ok':True,'data':{'ok':True}}).encode())
+            return SimpleNamespace(returncode=0)
+        with patch.object(f,'ssh_command',return_value=['ssh','host','xtlsbot-v1 admin-open-rescue']),patch.object(f.subprocess,'run',side_effect=run):
+            self.assertEqual(f.remote({}, {}, '/tmp/pins','xtlsbot-v1 admin-open-rescue'),{'ok':True})
+    def test_open_rescue_does_not_allow_arguments_or_shell_commands(self):
+        for value in ['xtlsbot-v1 admin-open-rescue extra','xtlsbot-v1 admin-open-rescue; reboot','reboot']:
+            with patch.object(f.subprocess,'run') as run:
+                with self.assertRaises(pilot.b.SafeError):f.remote({}, {}, '/tmp/pins',value)
+                run.assert_not_called()

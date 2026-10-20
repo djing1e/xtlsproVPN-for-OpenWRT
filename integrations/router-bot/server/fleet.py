@@ -169,7 +169,7 @@ def db_owner(database):
 
 def remote(config,router,pins,operation,input_data=None):
     # Closed, root-constructed commands; never interpolate operator text in SSH.
-    if operation!='xtlsbot-v1 identity' and not re.fullmatch(r'xtlsbot-v1 enroll-(apply|commit|rollback) [a-f0-9-]{36} [a-f0-9-]{36}',operation):raise SafeError('Некорректная команда регистрации.')
+    if operation not in ('xtlsbot-v1 identity','xtlsbot-v1 admin-open-rescue') and not re.fullmatch(r'xtlsbot-v1 enroll-(apply|commit|rollback) [a-f0-9-]{36} [a-f0-9-]{36}',operation):raise SafeError('Некорректная команда регистрации.')
     local={**config,'known_hosts':str(pins)}
     with tempfile.TemporaryFile() as output:
         result=subprocess.run(['runuser','-u','xtlsrouterbot','--',*ssh_command(local,router,operation)],input=json.dumps(input_data).encode() if input_data is not None else b'',stdout=output,stderr=subprocess.DEVNULL,timeout=40,preexec_fn=lambda:resource.setrlimit(resource.RLIMIT_FSIZE,(16384,16384)))
