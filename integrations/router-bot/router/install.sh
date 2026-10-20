@@ -10,6 +10,10 @@ for file in "$base/ssh.uc" "$base/ssh-entry" "$1"; do
 done
 command -v ucode >/dev/null || fail 'ucode required'
 [ -x /usr/bin/xray-lab-control ] || fail 'xtlsproVPN controller required'
+# SSH "none" authentication on an empty root password can bypass every
+# authorized_keys option. BatchMode/IdentitiesOnly do not prevent that.
+awk -F: '$1=="root" { found=1; if ($2=="") bad=1 } END { exit(!found || bad) }' /etc/shadow ||
+    fail 'Set a non-empty root password with passwd before authorizing the bot key'
 auth=/etc/dropbear/authorized_keys
 [ -d "$(dirname "$auth")" ] || fail 'OpenWrt Dropbear directory required'
 if [ -e "$auth" ] || [ -L "$auth" ]; then

@@ -13,6 +13,15 @@ creates the file with mode 0600 and records its previous absence in the backup.
 Existing keys and valid symlinks are preserved; directories/dangling symlinks
 are rejected. Password authentication is not changed by the installer.
 
+Root must have a non-empty password before enrollment. On LAB, SSH accepted
+the initial connection using an empty root password (SSH none authentication),
+so key restrictions were not applied. That prototype key was revoked before
+further testing. The installer now fails before authorization when the root
+shadow record is empty or missing. Set a password interactively; never send
+it to the bot or include it in source. The SSH client must use publickey-only
+settings, but those alone are not a substitute for refusing empty-password
+accounts. Real SSH positive/negative tests remain required before enrollment.
+
 Files live in /etc/xtlspro-bot (root-owned, not writable by the bot): ssh-entry
 and ssh.uc. The forced command is /etc/xtlspro-bot/ssh-entry. A later package or
 sysupgrade integration will be needed before claiming firmware-upgrade persistence.

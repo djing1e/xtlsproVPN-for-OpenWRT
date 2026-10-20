@@ -10,10 +10,11 @@ class Installer(unittest.TestCase):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.r=Path(self.tmp.name)
         self.auth=self.r/'authorized_keys';self.original='ssh-rsa EXISTING-ADMIN-KEY administrator\n';self.auth.write_text(self.original)
         self.key=self.r/'bot.pub';self.key.write_text(KEY+' bot\n')
+        self.shadow=self.r/'shadow';self.shadow.write_text('root:NONEMPTY-TEST-FIXTURE:0:0:99999:7:::\n')
         src=self.r/'source';src.mkdir()
         for name in ['ssh.uc','ssh-entry']:shutil.copy(BASE/'router'/name,src/name)
         controller=self.r/'controller';controller.touch();controller.chmod(0o700)
-        text=(BASE/'router/install.sh').read_text().replace('/etc/dropbear/authorized_keys',str(self.auth)).replace('/etc/xtlspro-bot',str(self.r/'deployed')).replace('/root/xtls-before-bot-bridge.',str(self.r/'backup.')).replace('/usr/bin/xray-lab-control',str(controller))
+        text=(BASE/'router/install.sh').read_text().replace('/etc/dropbear/authorized_keys',str(self.auth)).replace('/etc/xtlspro-bot',str(self.r/'deployed')).replace('/root/xtls-before-bot-bridge.',str(self.r/'backup.')).replace('/usr/bin/xray-lab-control',str(controller)).replace('/etc/shadow',str(self.shadow))
         self.installer=src/'install.sh';self.installer.write_text(text)
         bins=self.r/'bin';bins.mkdir()
         for name,body in [('id','echo 0'),('chown',':')]:
@@ -50,5 +51,10 @@ class Installer(unittest.TestCase):
         self.auth.unlink();self.auth.mkdir();self.run_install(False);self.assertTrue(self.auth.is_dir())
         self.auth.rmdir();self.auth.symlink_to(self.r/'missing');self.run_install(False)
         self.assertTrue(self.auth.is_symlink());self.assertFalse((self.r/'missing').exists())
+    def test_empty_or_missing_root_password_record_rejected(self):
+        for value in ['root::0:0:99999:7:::\n','other:x:0:0:99999:7:::\n','']:
+            self.shadow.write_text(value);self.run_install(False)
+            self.assertEqual(self.auth.read_text(),self.original)
+            self.assertFalse((self.r/'deployed').exists())
 
 if __name__=='__main__':unittest.main()
