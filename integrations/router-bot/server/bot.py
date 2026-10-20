@@ -98,6 +98,8 @@ class Store:
                 CREATE TABLE IF NOT EXISTS operator_jobs (
                     id TEXT PRIMARY KEY, uid INTEGER, action TEXT, created INTEGER,
                     state TEXT, text TEXT DEFAULT '');
+                CREATE TABLE IF NOT EXISTS catalog_sessions (
+                    uid INTEGER PRIMARY KEY, query TEXT, page INTEGER, awaiting INTEGER, expires INTEGER);
                 CREATE TABLE IF NOT EXISTS input_dialogs (
                     uid INTEGER PRIMARY KEY, router TEXT, expires INTEGER);
                 CREATE TABLE IF NOT EXISTS access_audit (
@@ -116,6 +118,21 @@ class Store:
                 yield db
         finally:
             db.close()
+
+    def catalog(self, uid, query=None, page=0, awaiting=False):
+        with self.connect() as db:
+            if query is not None:
+                db.execute('INSERT OR REPLACE INTO catalog_sessions VALUES (?,?,?,?,?)',
+                           (uid, query, page, int(awaiting), int(time.time()) + 900))
+            row = db.execute('SELECT * FROM catalog_sessions WHERE uid=? AND expires>?',
+                             (uid, int(time.time()))).fetchone()
+            return dict(row) if row else {'query': '', 'page': 0, 'awaiting': 0}
+
+    def catalog_metadata(self):
+        with self.connect() as db:
+            hwids = {r['router']: r['hwid'] or '' for r in db.execute('SELECT router,hwid FROM router_hwids')}
+            numbers = {r['router']: r['subscription_id'] or '' for r in db.execute('SELECT router,subscription_id FROM router_subscriptions')}
+        return hwids, numbers
 
     def offset(self):
         with self.connect() as db:
@@ -667,16 +684,61 @@ class Bot:
         epoch = '' if uid == self.config['admin_id'] else self.store.grant_epoch(uid, rid)
         return {'text': text, 'callback_data': self.store.button(uid, rid, action, target, epoch)}
 
-    def menu(self, uid):
-        rows = [[self.button(uid, rid, self.router_label(rid), 'status')]
-                for rid, router in self.config['routers'].items() if rid in self.visible(uid)]
-        if rows:
-            first = next(rid for rid in self.config['routers'] if rid in self.visible(uid))
-            rows.append([self.button(uid, first, '🆔 Мой ID', 'whoami'),
-                         self.button(uid, first, 'ℹ️ Помощь', 'help')])
+    @staticmethod
+    def search_key(value):
+        return re.sub(r'[\s\-№#]', '', str(value).casefold())
+
+    def menu(self, uid, query=None, page=None):
+        visible = self.visible(uid)
+        if not visible:
+            raise SafeError('Доступ к роутерам не выдан.')
+        previous = self.store.catalog(uid)
+        query = previous['query'] if query is None else query
+        page = previous['page'] if page is None else page
+        if not isinstance(query, str) or len(query) > 100 or any(ord(c) < 32 for c in query):
+            raise SafeError('Поиск: от 1 до 100 символов, без переводов строк.')
+        if type(page) is not int or page < 0:
+            raise SafeError('Некорректная страница каталога.')
+        hwids, numbers = self.store.catalog_metadata()
+        needle = self.search_key(query)
+        ordered = sorted(visible, key=lambda r: (self.config['routers'][r]['name'].casefold(), r))
+        found = [rid for rid in ordered if not needle or any(needle in self.search_key(value)
+                 for value in (self.config['routers'][rid]['name'], hwids.get(rid, ''), numbers.get(rid, '')))]
+        pages = max(1, (len(found) + 9) // 10)
+        page = min(page, pages - 1)
+        self.store.catalog(uid, query, page)
+        first = ordered[0]
+        counts = {}
+        for rid in ordered:
+            name = self.config['routers'][rid]['name'].casefold()
+            counts[name] = counts.get(name, 0) + 1
+        rows = []
+        for rid in found[page * 10:(page + 1) * 10]:
+            name = self.config['routers'][rid]['name']
+            if counts[name.casefold()] > 1:
+                # Real HWID distinguishes repeated names; never invent a hardware ID.
+                suffix = hwids.get(rid) or numbers.get(rid) or rid
+                name = name[:40] + ' · ' + suffix
+            rows.append([self.button(uid, rid, name[:80], 'status')])
+        nav = []
+        if page:
+            nav.append(self.button(uid, first, '⬅️ Назад', 'catalog_page', json.dumps([query, page - 1])))
+        if page + 1 < pages:
+            nav.append(self.button(uid, first, 'Вперёд ➡️', 'catalog_page', json.dumps([query, page + 1])))
+        if nav:
+            rows.append(nav)
+        rows.append([self.button(uid, first, '🔎 Поиск', 'catalog_search'),
+                     self.button(uid, first, '📋 Все роутеры', 'catalog_all')])
+        rows.append([self.button(uid, first, '🆔 Мой ID', 'whoami'),
+                     self.button(uid, first, 'ℹ️ Помощь', 'help')])
         if uid == self.config['admin_id']:
-            rows.append([self.button(uid,first,'⚙️ Администрирование бота','operator_menu')])
-        self.send(uid, 'xtlsproVPN · Управление роутерами\nВыберите роутер:', rows)
+            rows.append([self.button(uid, first, '⚙️ Администрирование бота', 'operator_menu')])
+        text = 'xtlsproVPN · Мои роутеры'
+        if query:
+            text += '\nПоиск: ' + query
+        text += f'\nНайдено: {len(found)} · Страница {page + 1}/{pages}'
+        text += '\nВыберите роутер:' if found else '\nНичего не найдено. Попробуйте другое имя, HWID или номер подписки.'
+        self.send(uid, text, rows)
 
     def status(self, uid, rid, epoch=None):
         self.authorize(uid, rid)
@@ -1131,7 +1193,8 @@ class Bot:
     def help(self, uid):
         self.authorize(uid)
         text = ('Выберите роутер, затем откройте «Локации» или нажмите «Автовыбор».'
-                '\nКнопка «Мои роутеры» возвращает в главное меню.')
+                '\nВ «Мои роутеры» нажмите «Поиск»: имя, полный или частичный HWID, номер подписки.'
+                '\nПоиск не зависит от регистра и дефисов HWID. /start сбрасывает поиск.')
         if uid == self.config['admin_id']:
             text += ('\n\nВыдача доступа: роутер → «Доступ клиентов» → «Добавить клиента».'
                      '\nОтзыв: «Доступ клиентов» → «Отозвать» рядом с Telegram ID.'
@@ -1184,6 +1247,11 @@ class Bot:
                     return
                 if uid==self.config['admin_id']:self.store.operator_dialog(uid,'clear')
                 dialog = self.store.dialog(uid) if uid == self.config['admin_id'] else None
+                catalog = self.store.catalog(uid)
+                if catalog['awaiting'] and not text.startswith('/'):
+                    self.menu(uid, query=text, page=0)
+                    return
+                self.store.catalog(uid, catalog['query'], catalog['page'])
                 if dialog and not text.startswith('/'):
                     self.access_prompt(uid, dialog, text, True)
                     self.store.clear_dialog(uid)
@@ -1198,7 +1266,7 @@ class Bot:
                     self.admin_command(uid, text)
                 else:
                     self.store.clear_dialog(uid)
-                    self.menu(uid)
+                    self.menu(uid, query='', page=0)
                 return
             with self.read_guard:
                 busy = uid in self.read_busy
@@ -1214,6 +1282,8 @@ class Bot:
             rid, action, target = button['router'], button['action'], button['target']
             epoch = button['grant_epoch']
             self.authorize(uid, rid, epoch)
+            catalog = self.store.catalog(uid)
+            self.store.catalog(uid, catalog['query'], catalog['page'])
             self.store.clear_dialog(uid)
             if uid==self.config['admin_id']:self.store.operator_dialog(uid,'clear')
             if action == 'operator_menu':
@@ -1224,6 +1294,18 @@ class Bot:
                 self.send(uid,'Введите имя роутера, например HOME или Клиент 1481 · Москва.',[[self.button(uid,rid,'Отмена','operator_menu')]])
             elif action == 'operator_backup':
                 self.operator_submit(uid,'backup')
+            elif action == 'catalog_search':
+                self.store.catalog(uid, catalog['query'], catalog['page'], awaiting=True)
+                self.send(uid, 'Введите имя роутера, HWID целиком или частично, либо номер подписки. Например: HOME, 242c-7c6d или 1481.\nОжидание — 15 минут.',
+                          [[self.button(uid, rid, 'Отмена', 'menu')]])
+            elif action == 'catalog_page':
+                try:
+                    query, page = json.loads(target)
+                except (ValueError, TypeError):
+                    raise SafeError('Некорректная страница каталога.') from None
+                self.menu(uid, query=query, page=page)
+            elif action == 'catalog_all':
+                self.menu(uid, query='', page=0)
             elif action == 'menu':
                 self.menu(uid)
             elif action == 'help':
