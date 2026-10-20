@@ -258,3 +258,33 @@ when their status card is opened. The search is restricted to current grants.
 Names stay short on buttons; repeated names include the real HWID when available.
 Cards retain the full HWID. Returning from a card preserves the search/page for
 15 minutes; «Все роутеры» or /start resets it.
+
+### Daily encrypted Telegram backups
+
+The backup timer runs at **12:00 Europe/Moscow** regardless of the VPS timezone,
+without random delay. It creates and decrypt-verifies an AES256 GPG archive, then
+uploads the `.tar.gpg` document to the positive private `admin_id` in config.json.
+The separate recovery key is never included or uploaded. Local rotation retains
+the latest 14 archives; sent Telegram documents remain in chat history.
+
+`backup.py create` remains local-only for manual/upgrade backups. The scheduled
+service uses `backup.py deliver`: a private atomic receipt prevents resending a
+confirmed delivery on the same Moscow date. Failed uploads leave the verified
+archive pending and reuse it on retry; systemd retries every five minutes, up to
+six service starts in an hour. Telegram does not provide an upload idempotency
+key, so a lost acknowledgement after a successful upload can produce a duplicate.
+If the VPS was offline at noon, Persistent=true catches up when the timer starts.
+No exact arrival second is promised: encryption and upload follow timer activation.
+
+Install with the pinned `server/setup-daily-backup.sh` on the active main bot VPS.
+It saves the old helper/units, preserves token/config/SSH identity/recovery key,
+updates the timer without restarting the bot and runs a test upload. Review with
+`systemctl list-timers xtls-router-bot-backup.timer` and
+`journalctl -u xtls-router-bot-backup.service`. The delivery receipt is private at
+`/var/backups/xtls-router-bot/.telegram-delivery.json`; do not delete it merely to
+retry a network failure.
+
+A fresh `backup.py restore --apply` installs files and units but leaves polling,
+uploads and operator jobs disabled. After a deliberate production cutover, enable
+the bot, operator path and backup timer explicitly; a restored test copy must not
+start a second Telegram poller or scheduled uploader.
