@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -19,7 +20,7 @@ class NativeBindingTests(unittest.TestCase):
             (mods/'uci.uc').write_text('export function cursor(){return {};};')
             source=SOURCE.read_text().split('let mode=ARGV[0]')[0]
             source=source.replace("const BIN='/usr/bin/netbird';", "const BIN='"+str(root/'binary')+"';")
-            source=source.replace("const SERVICE='/etc/init.d/netbird';", "const SERVICE='"+str(root/'service')+"';")
+            source=re.sub(r"const SERVICE=.*?;\n", "const SERVICE='"+str(root/'service')+"';\n",source,count=1,flags=re.S)
             source=source.replace('let c=package_catalog(true);',"let c={available:'0.79.0-r1',update_available:false};")
             path=root/'test.uc';path.write_text(source+'\nprint(upgrade_package());\n')
             for expected,ok in [('0.78.1-r1',False),('0.79.0-r1',True),('',True)]:
