@@ -4,7 +4,9 @@ import { cursor } from 'uci';
 
 const RUN='/var/run/xtlspro-netbird';
 const BIN='/usr/bin/netbird';
-const SERVICE='/etc/init.d/netbird';
+// Explicit service binding preserves legacy procd wrappers without guessing.
+const SERVICE=cursor().get_all('xray_lab_netbird','main')?.service=='netbird-wrapper' ?
+    '/etc/init.d/netbird-wrapper' : '/etc/init.d/netbird';
 const GUARD='/etc/init.d/xray_netbird_guard';
 const CONFIG='xray_lab_netbird';
 function quote(v) {return "'"+replace(''+v,/'/g,"'\\''")+"'";}
@@ -139,7 +141,7 @@ function upgrade_package() {
 }
 function status() {
     let s=settings(), d=daemon_status(), j=job();
-    return {installed:!!fs.stat(BIN),enabled:capture([SERVICE,'enabled'],2).ok,
+    return {service:SERVICE,installed:!!fs.stat(BIN),enabled:capture([SERVICE,'enabled'],2).ok,
         management_url:s.management_url || '',hostname:s.hostname || '',
         active_management_url:d?.management?.url || '',
         registered:!!s.registered_url && endpoint(s.registered_url)==endpoint(s.management_url) ||

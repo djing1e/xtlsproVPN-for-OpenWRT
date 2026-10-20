@@ -136,6 +136,17 @@ class NetBird(unittest.TestCase):
                               input=json.dumps(input) if input is not None else None,
                               env=env or self.env,capture_output=True,text=True,timeout=10)
 
+    def test_legacy_wrapper_status_uses_explicit_binding_without_reconnecting(self):
+        data=json.loads(self.config.read_text());data['xray_lab_netbird']['main']['service']='netbird-wrapper'
+        self.config.write_text(json.dumps(data));(self.r/'enabled').touch()
+        wrapper=self.bin/'netbird-service-wrapper'
+        wrapper.write_text('#!/bin/sh\nprintf used > "$TEST_ROOT/wrapper-used"\nexec "$TEST_ROOT/bin/netbird-service" "$@"\n');wrapper.chmod(0o755)
+        before=self.config.read_bytes();result=self.call('status')
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        value=json.loads(result.stdout)
+        self.assertTrue(value['enabled']);self.assertEqual(value['service'],str(wrapper))
+        self.assertTrue((self.r/'wrapper-used').exists());self.assertEqual(self.config.read_bytes(),before)
+
     def stage(self,action='connect',params=None):
         r=self.call('stage',action,input=params if params is not None else self.params)
         self.assertEqual(r.returncode,0,r.stdout+r.stderr)
