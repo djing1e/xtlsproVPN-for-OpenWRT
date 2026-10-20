@@ -247,3 +247,14 @@ enrollment transaction. See [EASY-ENROLLMENT.md](EASY-ENROLLMENT.md).
 
 
 Администраторское меню и отображение фактического HWID: [ADMIN-MENU.md](ADMIN-MENU.md).
+
+### Router catalog
+
+«Мои роутеры» shows ten devices per page with stable alphabetical ordering.
+«Поиск» accepts a name, a partial/full HWID, or a subscription number. HWID
+matching ignores case, spaces and hyphens. Results use cached metadata, without
+SSH polling the fleet; newly enrolled devices acquire HWID/subscription metadata
+when their status card is opened. The search is restricted to current grants.
+Names stay short on buttons; repeated names include the real HWID when available.
+Cards retain the full HWID. Returning from a card preserves the search/page for
+15 minutes; «Все роутеры» or /start resets it.
