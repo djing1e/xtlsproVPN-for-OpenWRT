@@ -23,6 +23,7 @@ assert r['head_sha']==sys.argv[3] and r['conclusion']=='success' and r['status']
 a=[x for x in artifacts if x['name']=='xtlsprovpn-1.4.1-openwrt-25.12.5-arm64']
 assert len(a)==1 and not a[0]['expired'] and 0<a[0]['size_in_bytes']<2097152
 assert re.fullmatch('sha256:[a-f0-9]{64}',a[0]['digest'])
+assert a[0]['digest']=='sha256:53703db79807b8be0dabaf112d9206c5fe68d8f09f4f711076906b12328356ed'
 print(a[0]['id'],a[0]['digest'][7:])
 PY
 )
@@ -37,7 +38,7 @@ with zipfile.ZipFile(sys.argv[1]) as z:
     assert sorted(z.namelist())==sorted(['SHA256SUMS','update.json',apk,server])
     assert sum(x.file_size for x in z.infolist())<16777216
     m=json.loads(z.read('update.json')); data=z.read(apk); sha=hashlib.sha256(data).hexdigest()
-    assert 0<len(data)<=8388608
+    assert sha=='8f3e211fd58160938786c981469d66ce5bed8b1e3195ab25d00f02df56c00c55' and len(data)==184891
     assert m['schema']==1 and m['version']=='1.4.1-r1' and m['tag']=='v1.4.1'
     assert m['openwrt']==['25.12.5'] and m['architectures']==['aarch64']
     assert m['apk']=={'name':apk,'size':len(data),'sha256':sha}

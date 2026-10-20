@@ -66,7 +66,10 @@ class Publish141(unittest.TestCase):
                 (r/'run.json').write_text(json.dumps({'head_sha':'b'*40 if mode=='wrong-commit' else SOURCE,'conclusion':'success','status':'completed'}))
                 env=dict(os.environ,PATH=str(bins)+':'+os.environ['PATH'],TEST_ROOT=str(r),TEST_MODE=mode,
                          RUNNER_TEMP=str(r),GITHUB_REPOSITORY='djing1e/xtlsproVPN-for-OpenWRT',PUBLISH_RELEASE='false' if mode=='verify-only' else 'true')
-                result=subprocess.run(['bash',str(ROOT/'scripts/publish-v141.sh')],cwd=ROOT,env=env,capture_output=True,text=True,timeout=20)
+                script=r/'publish.sh'
+                source=(ROOT/'scripts/publish-v141.sh').read_text().replace('53703db79807b8be0dabaf112d9206c5fe68d8f09f4f711076906b12328356ed',hashlib.sha256(data).hexdigest()).replace('8f3e211fd58160938786c981469d66ce5bed8b1e3195ab25d00f02df56c00c55',digest).replace('len(data)==184891','len(data)=='+str(len(apk)))
+                script.write_text(source)
+                result=subprocess.run(['bash',str(script)],cwd=ROOT,env=env,capture_output=True,text=True,timeout=20)
                 self.assertEqual(result.returncode==0,mode in ('ok','verify-only'),result.stdout+result.stderr)
                 calls=[json.loads(v) for v in (r/'calls').read_text().splitlines()] if (r/'calls').exists() else []
                 edits=[v for v in calls if v[:2]==['release','edit']]

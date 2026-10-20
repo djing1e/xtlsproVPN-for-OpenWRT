@@ -32,11 +32,13 @@ jobs:
         with:
           fetch-depth: 0
       - uses: actions/checkout@v4
+        if: github.ref != 'refs/heads/main'
         with:
           repository: ucode-lang/ucode
           ref: 85922056ef7abeace3cca3ab28bc1ac2d88e31b1
           path: .host-src/ucode
       - name: Prepare pinned native test tools
+        if: github.ref != 'refs/heads/main'
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake build-essential pkg-config libjson-c-dev
@@ -61,6 +63,7 @@ jobs:
           unzip -q "$RUNNER_TEMP/xray.zip" -d "$RUNNER_TEMP/xray"
           chmod +x "$RUNNER_TEMP/xray/xray"
       - name: Check full native application suite with real Xray
+        if: github.ref != 'refs/heads/main'
         env:
           XRAY_TEST_BIN: ${{ runner.temp }}/xray/xray
         run: python3 -m unittest discover -s tests

@@ -1,16 +1,22 @@
 # xtlsproVPN для OpenWrt
 
-Актуальный релиз **v1.4.0**, пакет **1.4.0-r1**. Управление подпиской, ядром Xray,
+Актуальный релиз **v1.4.1**, пакет **1.4.1-r1**. Управление подпиской, ядром Xray,
 прозрачным IPv4-прокси, DNS и маршрутизацией через LuCI.
 
-[Скачать текущий релиз](https://github.com/djing1e/xtlsproVPN-for-OpenWRT/releases/tag/v1.4.0)
-· [Описание релиза](docs/releases/v1.4.0.md)
+[Скачать текущий релиз](https://github.com/djing1e/xtlsproVPN-for-OpenWRT/releases/tag/v1.4.1)
+· [Описание релиза](docs/releases/v1.4.1.md)
 · [Протокол аппаратных проверок](docs/lab-validation-2026-10-16.md)
 · [NetBird](docs/netbird-admin.md)
 · [Guard NetBird](docs/netbird-recovery.md)
 · [Аварийный SSH](docs/emergency-ssh.md)
 · [Подключение к Telegram-боту](integrations/router-bot/ONBOARDING.md)
 · [Приёмка 1.4.0 на LAB](docs/router-bot-validation-2026-10-20.md)
+
+Выпуск 1.4.1 объединяет все исправления бота, HWID, Guard wrapper и восстановления.
+На странице релиза доступны **APK для роутера** и **серверный архив бота**.
+Серверный комплект сохраняет настройки и пароль резервных копий; ежедневная
+отправка зашифрованного архива администратору выполняется в 12:00 МСК,
+с ротацией последних 14 локальных архивов. [Подробности](docs/releases/v1.4.1.md).
 
 ## Платформа
 
