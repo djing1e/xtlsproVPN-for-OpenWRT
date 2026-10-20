@@ -51,7 +51,7 @@ the emergency VPS transport will be added separately after client selection
 and identity checks are tested. No shared root shell key for client actions.
 
 
-## Telegram LAB pilot
+## Telegram pilot with client access
 
 `server/bot.py` uses Python 3.13's standard library, Telegram HTTPS long polling,
 SQLite and OpenSSH. No pip dependencies or inbound web listener. The systemd
@@ -61,11 +61,12 @@ entered via getpass, verified against @xtlsproroutbot, stored root-only and pass
 using systemd LoadCredential. It is never an argument or a logged HTTP URL.
 Existing webhooks are refused, not silently removed.
 
-This is a single-administrator LAB pilot: only numeric Telegram ID 168179916,
-only private chats, only router 100.124.249.61:22, and only the previously tested
-bot key and pinned LAB host key. The installer preserves the SSH identity,
+The initial installation is a LAB pilot. The configured administrator sees all
+configured routers. Clients receive explicit per-router grants in SQLite and
+see only their assigned routers, in private chats. SSH uses the previously
+tested bot key and pinned router host keys. The installer preserves the SSH identity,
 backs up previous application/config/unit, and refuses differing existing config.
-No customer enrollment or emergency VPS recovery commands are implemented yet.
+Emergency VPS recovery commands are not implemented yet.
 
 Menu: router status, locations, automatic selection. Health is labelled as the
 last cached check; applying a selection is not itself a fresh health probe.
@@ -96,3 +97,39 @@ Local automated tests cover bridge/installer boundaries and Telegram access,
 callback ownership/expiry/replay, per-router locking, matching completion,
 failed/replaced/timed-out jobs, SSH policy and error redaction. Live Telegram
 button tests remain a deployment acceptance step.
+
+
+## Client enrollment and revocation
+
+An unbound user starts the bot and receives only their own numeric Telegram ID.
+The administrator uses `/bind ROUTER_ID TELEGRAM_ID`; the bot shows the exact
+router/name and numeric ID and requires a single-use confirmation. `/unbind`
+uses the same confirmation flow. `/access ROUTER_ID` (or the administrator-only
+router access button) lists grants and offers revocation buttons. `/help` lists
+configured router IDs for the administrator. No unsolicited enrollment messages
+are sent to customers; they reopen /start after approval.
+
+Clients can view status/locations and select a location or auto on their assigned
+routers only. They cannot list grants, issue/revoke grants or use administrator
+buttons. Unknown/removed routers and group chats are refused. Tokens are bound
+to the sender ID and current grant generation. Revocation deletes old buttons;
+regrant creates a different generation so queued workers and old receipts cannot
+regain access. Permission is checked before every SSH dispatch and router-data
+response. Revocation is serialized with dispatch and takes effect once confirmed;
+an already accepted router job may complete and is not cancelled retroactively.
+
+Access changes are recorded in a local SQLite audit with actor, target ID,
+router, operation and time. Roles are derived from configured administrator ID
+plus explicit grants; granting a router never grants an administrator role.
+Grant data and generations persist through restart. Schema upgrades are additive
+and preserve the previous pilot's administrator buttons and operation receipts.
+
+Update an existing VPS via `server/upgrade.py` alongside the checked bot.py.
+It does not ask for or replace the token, config, SSH key or known_hosts. It
+refuses active router operations, briefly stops only the bot service, creates a
+SQLite backup, tests migration on a copy and atomically replaces the application.
+On failure it restores application code without rewinding live grant changes.
+Router services and the stable APK are not touched. Test with a second Telegram
+account: unbound start, grant, own-router switch, revoke, old-button refusal,
+regrant and restart persistence. First live administrator selection through the
+Telegram interface was confirmed on LAB before this client-access extension.
