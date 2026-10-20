@@ -27,6 +27,9 @@ class HwidUpgradeTests(unittest.TestCase):
         self.assertEqual((self.dest/'profile.json').read_text(),'{}')
         self.assertEqual((self.dest/'ssh.uc').stat().st_mode&0o777,0o600)
         subprocess.run(['sha256sum','-c','bundle.sha256'],cwd=self.bundle,check=True,capture_output=True)
+    def test_first_connection_creates_missing_runtime_lock_directories(self):
+        for item in ['xtlspro-bot-admin','xtlspro-netbird','xray-lab-control']:(self.root/item).rmdir()
+        result=self.call();self.assertEqual(result.returncode,0,result.stdout+result.stderr)
     def test_corrupt_download_leaves_private_and_bundle_unchanged(self):
         self.payload.write_text('corrupt')
         self.assertNotEqual(self.call().returncode,0)

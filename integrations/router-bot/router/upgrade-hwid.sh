@@ -15,6 +15,7 @@ curl -fLsS --connect-timeout 10 --max-time 60 \
 hash=78f654f567764caba97d1d7619ed2383d7cd387a8bb78ebdb221b579ebec43b3
 printf '%s  %s\n' "$hash" "$work/ssh.uc" | sha256sum -c -
 ucode -c -o "$work/check.ucb" "$work/ssh.uc"
+mkdir -p /var/run/xtlspro-bot-admin /var/run/xtlspro-netbird /var/run/xray-lab-control
 exec 7>/var/run/xtlspro-bot-admin/action.lock
 flock -n 7
 exec 9>/var/run/xtlspro-netbird/action.lock
