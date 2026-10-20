@@ -18,7 +18,7 @@ cd "$work"
 sha256sum -c - <<'SUMS'
 0f3774a1b4ff5fa93377dec22adb73753f1cace8b3d2aa80c10b616ada7b0e0b  fleet.py
 a2c433bc6f9f01b3e441d9e64050ff29c9ccaa5a4b008e326e9c27fe54db0f6f  connect.py
-94ddcb6bd7151be244eedf185de6d93ba83b2e7708022407d88a708024f5caa3  backup.py
+0b8f9599aaadcc23a906645b662f250ada0e1d342e2531994d76eff6577c47a6  backup.py
 9d14575917d18b1f5a23a5552155cbd75c1686d6b9cdc43c4b20395963398246  xtls-router-add
 0b40a71b2eb90bf1d74f8c9debc7c3d5ec16f5ab30c183e83d400ebd623834df  install-connect.py
 SUMS

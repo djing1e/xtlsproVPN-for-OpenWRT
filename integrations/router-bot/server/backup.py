@@ -272,6 +272,19 @@ def unpack(archive, key, destination, stage_base=Path('/run')):
         return destination
 
 
+def restore_parents(root, parent):
+    # mkdir(mode=0755) is reduced to 0700 by the root-only restore umask.
+    # Set modes on newly created directories explicitly; never chmod existing
+    # system directories or follow symlinks.
+    missing = []
+    while parent != root and not parent.exists():
+        missing.append(parent)
+        parent = parent.parent
+    for directory in reversed(missing):
+        directory.mkdir(mode=0o755)
+        os.chmod(directory, 0o755)
+
+
 def apply_restore(directory, key, root=Path('/'), activate=True):
     # Only on a new VPS. Never overwrite an existing live bot installation.
     for name in (APP, CONF, STATE, 'etc/systemd/system/xtls-router-bot.service'):
@@ -289,7 +302,7 @@ def apply_restore(directory, key, root=Path('/'), activate=True):
         if name in OPTIONAL_FILES and not (directory / name).exists():
             continue
         dest = root_path(root, name)
-        dest.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
+        restore_parents(root, dest.parent)
         shutil.copyfile(directory / name, dest)
         os.chmod(dest, ALL_FILES[name])
     state = root_path(root, STATE)
