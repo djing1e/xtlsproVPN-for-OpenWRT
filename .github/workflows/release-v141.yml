@@ -18,7 +18,7 @@ permissions:
   contents: read
 concurrency:
   group: publish-v141-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
   publish:
     runs-on: ubuntu-24.04
@@ -30,6 +30,39 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          repository: ucode-lang/ucode
+          ref: 85922056ef7abeace3cca3ab28bc1ac2d88e31b1
+          path: .host-src/ucode
+      - name: Prepare pinned native test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential pkg-config libjson-c-dev
+          cmake -S .host-src/ucode -B .host-build/ucode \
+            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/ucode" -DCMAKE_INSTALL_LIBDIR=lib \
+            -DUCI_SUPPORT=OFF -DUBUS_SUPPORT=OFF -DULOOP_SUPPORT=OFF \
+            -DRTNL_SUPPORT=OFF -DNL80211_SUPPORT=OFF -DDIGEST_SUPPORT=OFF -DZLIB_SUPPORT=OFF
+          cmake --build .host-build/ucode -j2
+          cmake --install .host-build/ucode
+          mkdir -p "$RUNNER_TEMP/xtls-tools" "$RUNNER_TEMP/xray"
+          cat > "$RUNNER_TEMP/xtls-tools/ucode" <<'SH'
+          #!/bin/sh
+          export LD_LIBRARY_PATH="$RUNNER_TEMP/ucode/lib"
+          exec "$RUNNER_TEMP/ucode/bin/ucode" -L "$RUNNER_TEMP/ucode/lib/ucode" "$@"
+          SH
+          chmod +x "$RUNNER_TEMP/xtls-tools/ucode"
+          echo "$RUNNER_TEMP/xtls-tools" >> "$GITHUB_PATH"
+          curl -fL --connect-timeout 15 --max-time 180 \
+            https://github.com/XTLS/Xray-core/releases/download/v26.7.28/Xray-linux-64.zip \
+            -o "$RUNNER_TEMP/xray.zip"
+          echo "8195d909f1109b8f3d99eefe401a3c451d7bf4af71f24d3815420f77e5dd2a40  $RUNNER_TEMP/xray.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/xray.zip" xray -d "$RUNNER_TEMP/xray"
+          chmod +x "$RUNNER_TEMP/xray/xray"
+      - name: Check full native application suite with real Xray
+        env:
+          XRAY_TEST_BIN: ${{ runner.temp }}/xray/xray
+        run: python3 -m unittest discover -s tests
       - name: Check stable installation entry points
         run: python3 -m unittest discover -s tests -p test_install_links.py
       - name: Check release promotion safety
