@@ -9,7 +9,7 @@ for tool in python3 curl sha256sum ssh-keyscan; do command -v "$tool" >/dev/null
 
 work=$(mktemp -d /tmp/xtls-connect-install.XXXXXX)
 trap 'rm -rf "$work"' EXIT HUP INT TERM
-ref=bbe9da521d6b74d5876bfb088edd18fea4f0184a
+ref=79ba37a524660bfcf22e50480abcfe66f2dfb626
 base="https://raw.githubusercontent.com/djing1e/xtlsproVPN-for-OpenWRT/$ref/integrations/router-bot/server"
 for file in fleet.py connect.py backup.py xtls-router-add install-connect.py; do
     curl -fLsS --connect-timeout 10 --max-time 60 "$base/$file" -o "$work/$file"
