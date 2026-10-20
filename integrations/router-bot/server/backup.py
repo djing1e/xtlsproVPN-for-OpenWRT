@@ -108,6 +108,37 @@ def key_path(root):
     return root_path(root, CONF + 'backup.key')
 
 
+def sqlite_snapshot(path, destination):
+    owner = path.stat()
+    if owner.st_uid == os.geteuid():
+        with sqlite3.connect('file:' + str(path) + '?mode=ro', uri=True) as src, sqlite3.connect(str(destination)) as dst:
+            src.backup(dst)
+            if dst.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
+                raise BackupError('База не прошла проверку целостности.')
+        return
+    # Open a live WAL database as its owner, so root cannot create root-owned
+    # -wal/-shm sidecars that would prevent the running bot from writing later.
+    with tempfile.TemporaryDirectory(prefix='xtls-db-copy-', dir=destination.parent.parent) as temp:
+        temp = Path(temp)
+        os.chown(temp, owner.st_uid, owner.st_gid)
+        target = temp / 'state.sqlite3'
+        def drop_identity():
+            os.setgroups([])
+            os.setgid(owner.st_gid)
+            os.setuid(owner.st_uid)
+        code = ("import sqlite3,sys; "
+                "a=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True); "
+                "b=sqlite3.connect(sys.argv[2]); a.backup(b); "
+                "assert b.execute('PRAGMA integrity_check').fetchone()[0]=='ok'; "
+                "b.close(); a.close()")
+        result = subprocess.run(['/usr/bin/python3', '-c', code, str(path), str(target)],
+                                preexec_fn=drop_identity, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, timeout=60)
+        if result.returncode:
+            raise BackupError('Не удалось снять копию базы от имени её владельца.')
+        shutil.copyfile(target, destination)
+
+
 def snapshot(root, destination):
     data = {}
     config = json.loads(root_path(root, CONF + 'config.json').read_text())
@@ -120,10 +151,7 @@ def snapshot(root, destination):
         if not path.is_file() or path.stat().st_size > MAX_FILE:
             raise BackupError('Отсутствует обязательный файл или превышен размер: ' + name)
         if name == STATE + 'bot.sqlite3':
-            with sqlite3.connect('file:' + str(path) + '?mode=ro', uri=True) as src, sqlite3.connect(str(destination)) as dst:
-                src.backup(dst)
-                if dst.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
-                    raise BackupError('База не прошла проверку целостности.')
+            sqlite_snapshot(path, destination)
             data[name] = destination.read_bytes()
         else:
             data[name] = path.read_bytes()

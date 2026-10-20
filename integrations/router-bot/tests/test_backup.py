@@ -5,7 +5,7 @@ from pathlib import Path
 import tarfile
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 import types
 import os
 
@@ -72,6 +72,27 @@ class BackupTests(unittest.TestCase):
         self.assertEqual(backup.key_path(new_vps).read_bytes(), backup.key_path(self.root).read_bytes())
         with self.assertRaises(backup.BackupError):
             backup.apply_restore(recovered, backup.key_path(self.root), new_vps, activate=False)
+
+    def test_live_database_copy_drops_to_database_owner(self):
+        actual = self.root / backup.STATE / 'bot.sqlite3'
+        source = MagicMock()
+        source.__str__.return_value = str(actual)
+        source.stat.return_value = types.SimpleNamespace(st_uid=os.getuid() + 1, st_gid=os.getgid())
+        folder = self.stage / 'db-out'
+        folder.mkdir()
+        def run(args, **kwargs):
+            import shutil
+            shutil.copyfile(actual, args[-1])
+            return types.SimpleNamespace(returncode=0)
+        with patch.object(backup.os, 'chown'), patch.object(backup.subprocess, 'run', side_effect=run) as executed:
+            backup.sqlite_snapshot(source, folder / 'copy.sqlite3')
+        self.assertTrue((folder / 'copy.sqlite3').is_file())
+        drop = executed.call_args.kwargs['preexec_fn']
+        with patch.object(backup.os, 'setgroups') as groups, patch.object(backup.os, 'setgid') as gid, patch.object(backup.os, 'setuid') as uid:
+            drop()
+            groups.assert_called_once_with([])
+            gid.assert_called_once_with(os.getgid())
+            uid.assert_called_once_with(os.getuid() + 1)
 
     def test_wrong_key_does_not_create_restore_directory(self):
         archive = backup.create(self.root, self.stage)
