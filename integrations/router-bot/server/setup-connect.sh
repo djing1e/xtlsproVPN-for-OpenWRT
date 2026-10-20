@@ -9,14 +9,14 @@ for tool in python3 curl sha256sum ssh-keyscan; do command -v "$tool" >/dev/null
 
 work=$(mktemp -d /tmp/xtls-connect-install.XXXXXX)
 trap 'rm -rf "$work"' EXIT HUP INT TERM
-ref=53f8962bd71c0a13e5e799b7540d558cdcdcc757
+ref=d6a06c14ce9ad5279eb7770b7417a131fdc4ac91
 base="https://raw.githubusercontent.com/djing1e/xtlsproVPN-for-OpenWRT/$ref/integrations/router-bot/server"
 for file in fleet.py connect.py backup.py xtls-router-add install-connect.py; do
     curl -fLsS --connect-timeout 10 --max-time 60 "$base/$file" -o "$work/$file"
 done
 cd "$work"
 sha256sum -c - <<'SUMS'
-87f60e88c091a872849a76eff29558c7aae1b9489ee302b956889d1543eb440e  fleet.py
+0f3774a1b4ff5fa93377dec22adb73753f1cace8b3d2aa80c10b616ada7b0e0b  fleet.py
 1903876023a2ff6371f7d496cd5703273688e2344a63a3a4524e647ef5089e23  connect.py
 86c60d2028d337d16bf586deeb7d0273dc4aa897e06f41cbe08609399519677d  backup.py
 9d14575917d18b1f5a23a5552155cbd75c1686d6b9cdc43c4b20395963398246  xtls-router-add
