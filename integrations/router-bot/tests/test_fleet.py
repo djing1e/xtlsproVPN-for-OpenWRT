@@ -66,6 +66,23 @@ class FleetPlanningTests(unittest.TestCase):
             self.assertIn(rule,text)
         with self.assertRaises(pilot.b.SafeError):f.relay_text('root',22003)
 
+    def test_profile_accepts_real_keygen_comment_and_is_repeatable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);config_path=root/'config.json';output=root/'profile.json'
+            config={'ssh_key':'/private/bot-key','routers':{}}
+            config_path.write_text(json.dumps(config))
+            read=Path.read_text;mkdtemp=tempfile.mkdtemp
+            def read_text(path,*args,**kwargs):
+                if str(path)=='/etc/ssh/ssh_host_ed25519_key.pub':return KEY+' root@bot\n'
+                return read(path,*args,**kwargs)
+            with patch.object(f,'CONFIG',config_path),patch.object(f,'command',return_value=SimpleNamespace(stdout=RESCUE+' xtls-router-bot\n')),patch.object(Path,'read_text',read_text),patch.object(f.os,'chown'),patch.object(f.tempfile,'mkdtemp',side_effect=lambda **kw:mkdtemp(dir=root)):
+                f.profile_command(config,'87.239.135.108',62152,output)
+                value=json.loads(output.read_text())
+                self.assertEqual(value['bot_public_key'],RESCUE)
+                self.assertEqual(value['rescue_host_key'],KEY)
+                f.profile_command(config,'87.239.135.108',62152,output)
+                self.assertEqual(json.loads(output.read_text()),value)
+
     def test_allocator_reserves_roster_live_and_orphan_accounts(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);(root/'orphan.conf').write_text('Match User orphan\n    PermitListen 127.0.0.1:22002\n')

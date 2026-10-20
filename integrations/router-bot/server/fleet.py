@@ -231,7 +231,7 @@ def profile_command(config,host,port,output):
     address=ipaddress.ip_address(host)
     if address.version!=4 or not address.is_global or not 1<=port<=65535:raise SafeError('Нужен публичный IPv4 VPS и SSH-порт.')
     host_key=' '.join(Path('/etc/ssh/ssh_host_ed25519_key.pub').read_text().split()[:2]);key(host_key)
-    bot_key=command('runuser','-u','xtlsrouterbot','--','ssh-keygen','-y','-f',config['ssh_key']).stdout.strip();key(bot_key)
+    bot_key=' '.join(command('runuser','-u','xtlsrouterbot','--','ssh-keygen','-y','-f',config['ssh_key']).stdout.split()[:2]);key(bot_key)
     old=config.get('fleet_profile')
     value={'schema':1,'profile_id':old['profile_id'] if old else str(uuid.uuid4()),'bot_public_key':bot_key,'rescue_host':host,'rescue_port':port,'rescue_host_key':host_key}
     if old and old!=value:raise SafeError('Профиль VPS изменился. Миграция требует отдельной проверки.')
