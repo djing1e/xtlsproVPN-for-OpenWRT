@@ -2,9 +2,9 @@
 # Published stable release; bump version, URL and hash together.
 set -eu
 MODE=install
-VERSION='1.3.0-r4'
-SHA256='e19779bba7b037383791817770776b0a75925ea24cc4e81dcb9d06c5cb117129'
-URL="https://github.com/djing1e/xtlsproVPN-for-OpenWRT/releases/download/v1.3.0/xtlsprovpn-$VERSION.apk"
+VERSION='1.4.0-r1'
+SHA256='15f20b62714a03e05862582652f553d7854fd76f65cd7813695edbc417e63821'
+URL="https://github.com/djing1e/xtlsproVPN-for-OpenWRT/releases/download/v1.4.0/xtlsprovpn-$VERSION.apk"
 
 fail() { echo "xtlsproVPN: $*" >&2; exit 1; }
 [ "$#" -eq 0 ] || fail 'Параметры не поддерживаются.'
