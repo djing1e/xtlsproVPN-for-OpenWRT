@@ -237,3 +237,10 @@ The package, enrollment, idempotent adoption, primary/rescue return, reboot and
 in-place helper refresh have been exercised on LAB. See
 [the dated validation record](../../docs/router-bot-validation-2026-10-20.md)
 for evidence, VPS-side fixes and the precise limits of physical acceptance.
+
+## Two-command operator wizard
+
+`xtls-router-add` on an existing bot VPS prints a verified command for the router
+and waits for its compact SSH fingerprint code. No profile file transfer or new
+listener is needed. Existing records and grants use the same identity-bound
+enrollment transaction. See [EASY-ENROLLMENT.md](EASY-ENROLLMENT.md).

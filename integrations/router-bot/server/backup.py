@@ -29,7 +29,8 @@ FILES = {
     STATE + 'bot.sqlite3': 0o600,
     'etc/systemd/system/xtls-router-bot.service': 0o644,
 }
-OPTIONAL_FILES = {APP + 'fleet.py': 0o644}
+OPTIONAL_FILES = {APP + 'fleet.py': 0o644, APP + 'connect.py': 0o644,
+                  'usr/local/sbin/xtls-router-add': 0o755}
 ALL_FILES = {**FILES, **OPTIONAL_FILES}
 SERVICE = '''[Unit]
 Description=Encrypted xtlsproVPN bot backup

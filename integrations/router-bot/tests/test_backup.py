@@ -64,6 +64,16 @@ class BackupTests(unittest.TestCase):
         self.assertEqual((output/name).read_text(),'public fleet tool')
         self.assertEqual((output/name).stat().st_mode & 0o777,0o644)
 
+    def test_optional_wizard_and_alias_survive_backup_with_executable_mode(self):
+        names={backup.APP+'fleet.py':'fleet',backup.APP+'connect.py':'connect','usr/local/sbin/xtls-router-add':'#!/bin/sh\n'}
+        for name,body in names.items():
+            path=self.root/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text(body)
+        archive=backup.create(self.root,self.stage)
+        output=self.stage/'wizard-restored'
+        backup.unpack(archive,backup.key_path(self.root),output,self.stage)
+        for name,body in names.items():self.assertEqual((output/name).read_text(),body)
+        self.assertEqual((output/'usr/local/sbin/xtls-router-add').stat().st_mode&0o777,0o755)
+
     def test_apply_into_new_vps_tree_preserves_ids_and_refuses_overwrite(self):
         archive = backup.create(self.root, self.stage)
         recovered = self.stage / 'recovered'
