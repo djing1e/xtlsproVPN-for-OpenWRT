@@ -1,0 +1,35 @@
+[Unit]
+Description=xtlsproVPN Telegram router bot (LAB pilot)
+Wants=network-online.target
+After=network-online.target netbird.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=xtlsrouterbot
+Group=xtlsrouterbot
+WorkingDirectory=/opt/xtls-router-bot
+ExecStart=/usr/bin/python3 -B /opt/xtls-router-bot/bot.py
+LoadCredential=telegram_token:/etc/xtls-router-bot/telegram_token
+StateDirectory=xtls-router-bot
+StateDirectoryMode=0750
+UMask=0077
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadOnlyPaths=/var/lib/xtls-router-bot/.ssh
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+LimitCORE=0
+
+[Install]
+WantedBy=multi-user.target
