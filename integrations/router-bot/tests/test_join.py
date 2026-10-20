@@ -24,7 +24,7 @@ print('xtls-enroll-v1:LONG-LEGACY-PASSPORT')
         curl=self.bins/'curl';curl.write_text('#!/bin/sh\nwhile [ "$#" -gt 0 ]; do if [ "$1" = -o ]; then shift; cp "$JOIN_UPGRADE" "$1"; exit 0; fi; shift; done; exit 1\n');curl.chmod(0o700)
         self.payload=payload
         self.script=self.root/'join.sh' 
-        self.script.write_text((BASE/'router/join.sh').read_text().replace('/usr/bin/xray-lab-bot',str(controller)).replace('/root/xtls-router-passport.json',str(self.passport)).replace('049cb558368566d9782ebd4aad9d3f280d32d456a6aac780a4736eacb45661e7',hashlib.sha256(payload.read_bytes()).hexdigest()))
+        self.script.write_text((BASE/'router/join.sh').read_text().replace('/usr/bin/xray-lab-bot',str(controller)).replace('/root/xtls-router-passport.json',str(self.passport)).replace('ac35aaaba77dd912dcba5cb3cdaee13f840950b470cfa34579c7915a2288eb6d',hashlib.sha256(payload.read_bytes()).hexdigest()))
         self.env=dict(os.environ,PATH=str(self.bins)+':'+os.environ['PATH'],JOIN_CALLS=str(self.calls),JOIN_PASSPORT=str(self.passport),JOIN_UPGRADE=str(payload))
     def call(self,code):return subprocess.run(['sh',str(self.script),code],env=self.env,capture_output=True,text=True,timeout=15)
     def test_one_command_prepares_profile_and_prints_only_compact_pair_code(self):
