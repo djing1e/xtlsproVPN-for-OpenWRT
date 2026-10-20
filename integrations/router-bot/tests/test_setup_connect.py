@@ -26,6 +26,13 @@ class SetupConnectTests(unittest.TestCase):
         for digest,name in entries:self.assertEqual(hashlib.sha256((SERVER/name).read_bytes()).hexdigest(),digest)
         subprocess.run(['sh','-n',str(SERVER/'setup-catalog.sh')],check=True)
 
+    def test_device_ui_manifest_matches_reviewed_sources(self):
+        source=(SERVER/'setup-device-ui.sh').read_text()
+        entries=re.findall(r'^([a-f0-9]{64})  ([a-zA-Z0-9_.-]+)$',source,re.M)
+        self.assertEqual(len(entries),2)
+        for digest,name in entries:self.assertEqual(hashlib.sha256((SERVER/name).read_bytes()).hexdigest(),digest)
+        subprocess.run(['sh','-n',str(SERVER/'setup-device-ui.sh')],check=True)
+
     def test_daily_backup_manifest_matches_reviewed_sources(self):
         source=(SERVER/'setup-daily-backup.sh').read_text()
         entries=re.findall(r'^([a-f0-9]{64})  ([a-zA-Z0-9_.-]+)$',source,re.M)
