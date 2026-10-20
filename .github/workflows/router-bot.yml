@@ -1,7 +1,7 @@
 name: Router bot SSH bridge checks
 on:
   push:
-    branches: ['feature/router-bot', 'main']
+    branches: ['feature/router-bot', 'feature/easy-router-enrollment', 'main']
     paths:
       - 'integrations/router-bot/**'
       - '.github/workflows/router-bot.yml'

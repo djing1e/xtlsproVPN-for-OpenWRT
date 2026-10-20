@@ -81,7 +81,8 @@ def choose(config,p,requested=None,name=None):
 
 def pinned(known,p,port):
     primary=p['host'] if p['port']==22 else '['+p['host']+']:'+str(p['port'])
-    entries={primary:p['host_key'],'[127.0.0.1]:'+str(port):p['host_key']}
+    entries={primary:p['host_key']}
+    if port is not None:entries['[127.0.0.1]:'+str(port)]=p['host_key']
     lines=known.splitlines()
     for host,expected in entries.items():
         for line in lines:
