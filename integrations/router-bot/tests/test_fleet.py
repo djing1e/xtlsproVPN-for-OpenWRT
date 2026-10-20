@@ -139,6 +139,9 @@ class FleetTransactionTests(unittest.TestCase):
         def remote(config,router,pins,command,input_data=None):
             self.calls.append(command)
             if router['host']=='127.0.0.1' and self.rescue_fails:raise pilot.b.SafeError('Unreachable')
+            if command=='xtlsbot-v1 admin-open-rescue':
+                self.rescue_fails=False
+                return {'ok':True}
             if command=='xtlsbot-v1 identity':return {**P,'enrollment':copy.deepcopy(self.state)}
             if 'enroll-apply' in command:
                 self.state={'transaction':command.split()[-1],'state':'pending','user':input_data['user'],'remote_port':input_data['remote_port']}
@@ -167,7 +170,10 @@ class FleetTransactionTests(unittest.TestCase):
         self.assertEqual(saved['routers']['lab']['rescue']['port'],22003)
         with sqlite3.connect(self.db) as db:self.assertEqual(db.execute('SELECT * FROM grants').fetchall(),[(123,'lab')])
         commands=len(self.commands)
+        self.rescue_fails=True  # Standby tunnel has closed since first enrollment.
         f.enroll(saved,P,None,None)
+        self.assertIn('xtlsbot-v1 admin-open-rescue',self.calls)
+        self.assertFalse(self.rescue_fails)
         self.assertEqual(sum('enroll-apply' in x for x in self.calls),1)
         self.assertEqual(len(self.commands),commands)
         self.assertEqual(self.pins.read_text().count('[127.0.0.1]:22003'),1)

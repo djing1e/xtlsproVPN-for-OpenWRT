@@ -315,6 +315,11 @@ def enroll(config,p,requested,name):
                 with db_owner(database):db.rollback();db.close()
             applied=True
             remote(config,primary,probe,'xtlsbot-v1 enroll-apply '+p['device_id']+' '+tx,{'profile_id':p['profile_id'],'transaction':tx,'user':account,'remote_port':port,'local_port':p['port']})
+        if existing or recovered.get('state')=='enrolled':
+            # A healthy router closes its standby tunnel. Re-open it explicitly
+            # before verifying an existing registration; never reapply enrollment.
+            opened=remote(config,primary,probe,'xtlsbot-v1 admin-open-rescue')
+            if opened.get('ok') is not True:raise SafeError('Не удалось открыть аварийный канал для проверки.')
         deadline=time.monotonic()+50
         rescue={'host':'127.0.0.1','port':port}
         while True:
