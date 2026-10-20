@@ -2,6 +2,7 @@
 """Encrypted, verified, portable bot backup. Key is deliberately outside archive."""
 import argparse
 import fcntl
+import getpass
 from datetime import datetime, timezone
 import hashlib
 import io
@@ -184,12 +185,28 @@ def snapshot(root, destination):
     return data
 
 
-def create(root=Path('/'), stage_base=Path('/run')):
+def archive_directory(root):
     out = root_path(root, 'var/backups/xtls-router-bot')
     out.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(out, 0o700)
-    key = key_path(root)
-    if not key.is_file() or key.stat().st_mode & 0o077:
+    return out
+
+
+def create(root=Path('/'), stage_base=Path('/run')):
+    archive_directory(root)
+    lock = root_path(root, 'var/backups/xtls-router-bot/.create.lock')
+    with lock.open('a') as stream:
+        os.chmod(lock, 0o600)
+        fcntl.flock(stream, fcntl.LOCK_EX)
+        return _create(root, stage_base)
+
+
+def _create(root=Path('/'), stage_base=Path('/run'), recovery_key=None):
+    out = root_path(root, 'var/backups/xtls-router-bot')
+    out.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(out, 0o700)
+    key = recovery_key if recovery_key is not None else key_path(root)
+    if key.is_symlink() or not key.is_file() or key.stat().st_mode & 0o077:
         raise BackupError('Ключ резервной копии отсутствует или доступен другим пользователям.')
     with tempfile.TemporaryDirectory(prefix='xtls-backup-', dir=stage_base) as temp:
         stage = Path(temp)
@@ -224,16 +241,100 @@ def create(root=Path('/'), stage_base=Path('/run')):
 
 
 
-def delivery_state(path, value):
-    fd, temporary = tempfile.mkstemp(prefix='.telegram-', dir=path.parent)
+def private_write(path, body):
+    if path.is_symlink():
+        raise BackupError('Символьная ссылка вместо служебного файла.')
+    fd, temporary = tempfile.mkstemp(prefix='.backup-', dir=path.parent)
     try:
-        with os.fdopen(fd, 'w') as stream:
-            json.dump(value, stream)
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(body)
         os.chmod(temporary, 0o600)
         os.replace(temporary, path)
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
+
+
+def delivery_state(path, value):
+    private_write(path, json.dumps(value).encode())
+
+
+def key_generation(root):
+    stat = key_path(root).stat()
+    return str(stat.st_ino) + ':' + str(stat.st_mtime_ns)
+
+
+def delivery_identity(root):
+    config = json.loads(root_path(root, CONF + 'config.json').read_text())
+    admin = config.get('admin_id')
+    token = root_path(root, CONF + 'telegram_token').read_text().strip()
+    if type(admin) is not int or not 0 < admin < 2**52 or not re.fullmatch(r'[0-9]{5,16}:[A-Za-z0-9_-]{20,128}', token):
+        raise BackupError('Некорректный Telegram ID администратора или токен бота.')
+    return admin, token
+
+
+def pending_delivery(root, archive, admin, token, day):
+    return {'day': day, 'admin': admin, 'bot': sha(token.encode()), 'state': 'pending',
+            'archive': archive.name, 'sha256': sha(archive.read_bytes()), 'key_generation': key_generation(root)}
+
+
+def validate_password(value, new=False):
+    if (not isinstance(value, str) or not value or len(value) > 1024 or
+            any(ord(c) < 32 or ord(c) == 127 for c in value) or (new and len(value) < 20)):
+        raise BackupError('Парольная фраза: от 20 до 1024 символов, без переводов строк.' if new else 'Некорректная парольная фраза.')
+    return (value + '\n').encode('utf-8')
+
+
+def prompt_password(new=False):
+    if not sys.stdin.isatty():
+        raise BackupError('Ввод пароля разрешён только в интерактивном терминале.')
+    password = getpass.getpass('Новая парольная фраза (от 20 символов): ' if new else 'Парольная фраза архива: ')
+    validate_password(password, new)
+    if new and password != getpass.getpass('Повторите парольную фразу: '):
+        raise BackupError('Парольные фразы не совпали. Настройки не изменены.')
+    return password
+
+
+def change_password(password, root=Path('/'), stage_base=Path('/run')):
+    body = validate_password(password, new=True)
+    admin, token = delivery_identity(root)
+    archive_directory(root)
+    key = key_path(root)
+    if not key.is_file() or key.stat().st_mode & 0o077:
+        raise BackupError('Ожидался существующий закрытый ключ резервных копий.')
+    receipt = root_path(root, 'var/backups/xtls-router-bot/.telegram-delivery.json')
+    lock = root_path(root, 'run/xtls-router-backup-delivery.lock')
+    create_lock = root_path(root, 'var/backups/xtls-router-bot/.create.lock')
+    with lock.open('a') as delivery, create_lock.open('a') as copying:
+        os.chmod(lock, 0o600); os.chmod(create_lock, 0o600)
+        try:
+            fcntl.flock(delivery, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise BackupError('Выполняется отправка архива. Повтори смену пароля после её завершения.') from None
+        fcntl.flock(copying, fcntl.LOCK_EX)
+        old_key = key.read_bytes()
+        old_receipt = receipt.read_bytes() if receipt.exists() else None
+        with tempfile.TemporaryDirectory(prefix='xtls-new-passphrase-', dir=stage_base) as temporary:
+            candidate = Path(temporary) / 'recovery.key'
+            private_write(candidate, body)
+            # Encrypt, decrypt and verify all archived files before changing the live key.
+            archive = _create(root, stage_base, recovery_key=candidate)
+        previous = key.with_name('backup.key.previous-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ-') + secrets.token_hex(3))
+        private_write(previous, old_key)
+        try:
+            private_write(key, body)
+            day = datetime.now(ZoneInfo('Europe/Moscow')).date().isoformat()
+            delivery_state(receipt, pending_delivery(root, archive, admin, token, day))
+        except Exception:
+            private_write(key, old_key)
+            if old_receipt is None: receipt.unlink(missing_ok=True)
+            else: private_write(receipt, old_receipt)
+            raise
+    print('Парольная фраза установлена. Новый архив зашифрован, расшифрован и проверен.')
+    print('Архив ожидает отправки администратору:', archive.name)
+    print('Прежний ключ для старых архивов:', previous)
+    print('Сохрани прежний ключ вне VPS. Старые архивы новый пароль не открывает.')
+    return archive, previous
 
 
 def send_archive(archive, token, admin, digest, day):
@@ -243,7 +344,7 @@ def send_archive(archive, token, admin, digest, day):
     boundary = 'xtls-backup-' + secrets.token_hex(24)
     caption = ('xtlsproVPN · резервная копия · ' + day + ' МСК\n'
                'Архив зашифрован и проверен.\nSHA256: ' + digest +
-               '\nКлюч расшифровки хранится отдельно и не отправляется.')
+               '\nДля восстановления нужен пароль или сохранённый ключ. Секрет не отправляется.')
     parts = []
     for name, value in [('chat_id', str(admin)), ('caption', caption)]:
         parts.append(('--' + boundary + '\r\nContent-Disposition: form-data; name="' +
@@ -272,11 +373,7 @@ def send_archive(archive, token, admin, digest, day):
 
 
 def deliver(root=Path('/'), stage_base=Path('/run')):
-    config = json.loads(root_path(root, CONF + 'config.json').read_text())
-    admin = config.get('admin_id')
-    token = root_path(root, CONF + 'telegram_token').read_text().strip()
-    if type(admin) is not int or not 0 < admin < 2**52 or not re.fullmatch(r'[0-9]{5,16}:[A-Za-z0-9_-]{20,128}', token):
-        raise BackupError('Некорректный Telegram ID администратора или токен бота.')
+    admin, token = delivery_identity(root)
     out = root_path(root, 'var/backups/xtls-router-bot')
     out.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(out, 0o700)
@@ -296,7 +393,8 @@ def deliver(root=Path('/'), stage_base=Path('/run')):
                 if not isinstance(state, dict): raise ValueError()
             except (OSError, ValueError):
                 raise BackupError('Журнал доставки повреждён; требуется проверка администратора.') from None
-        current = state.get('day') == day and state.get('admin') == admin and state.get('bot') == sha(token.encode())
+        current = (state.get('day') == day and state.get('admin') == admin and
+                   state.get('bot') == sha(token.encode()) and state.get('key_generation') == key_generation(root))
         if current and state.get('state') == 'sent':
             print('Сегодняшняя копия уже доставлена администратору.')
             return
@@ -312,8 +410,7 @@ def deliver(root=Path('/'), stage_base=Path('/run')):
                 archive = candidate
         if archive is None:
             archive = create(root, stage_base)
-            state = {'day': day, 'admin': admin, 'bot': sha(token.encode()), 'state': 'pending',
-                     'archive': archive.name, 'sha256': sha(archive.read_bytes())}
+            state = pending_delivery(root, archive, admin, token, day)
             delivery_state(receipt, state)
         message = send_archive(archive, token, admin, state['sha256'], day)
         state.update(state='sent', message_id=message)
@@ -435,9 +532,11 @@ def apply_restore(directory, key, root=Path('/'), activate=True):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=['install', 'create', 'deliver', 'restore'])
+    parser.add_argument('action', choices=['install', 'create', 'deliver', 'password', 'restore'])
     parser.add_argument('archive', nargs='?')
-    parser.add_argument('--key-file')
+    recovery = parser.add_mutually_exclusive_group()
+    recovery.add_argument('--key-file')
+    recovery.add_argument('--ask-passphrase', action='store_true')
     parser.add_argument('--output')
     parser.add_argument('--apply', action='store_true')
     args = parser.parse_args()
@@ -448,21 +547,30 @@ def main():
         install()
         print('Ежедневная отправка администратору в 12:00 МСК включена; на VPS сохраняются последние 14 архивов.')
         print('Ключ восстановления:', key_path(Path('/')))
-        print('Скачай ключ отдельно от архива и сохрани вне VPS. Без него восстановление невозможно.')
+        print('Сохрани ключ вне VPS либо задай свою парольную фразу командой backup.py password.')
+    elif args.action == 'password':
+        change_password(prompt_password(new=True))
     elif args.action == 'deliver':
         deliver()
     elif args.action == 'create':
         print('Проверенная зашифрованная копия:', create())
     else:
-        if not args.archive or not args.key_file or not args.output:
-            raise BackupError('Нужны archive --key-file KEY --output NEW_DIRECTORY.')
-        restored = unpack(Path(args.archive).resolve(), Path(args.key_file).resolve(), Path(args.output).absolute())
-        if args.apply:
-            apply_restore(restored, Path(args.key_file).resolve())
-            print('Бот восстановлен и оставлен остановленным. Подключи новый VPS к NetBird, останови старую копию бота и запусти службу.')
-        else:
-            print('Копия проверена и распакована:', restored)
-            print('Система не изменена. Каталог содержит секреты; сохрани права 700.')
+        if not args.archive or not args.output or not (args.key_file or args.ask_passphrase):
+            raise BackupError('Нужны archive --output NEW_DIRECTORY и --key-file KEY либо --ask-passphrase.')
+        with tempfile.TemporaryDirectory(prefix='xtls-restore-passphrase-', dir='/run') as temporary:
+            if args.ask_passphrase:
+                key = Path(temporary) / 'recovery.key'
+                private_write(key, validate_password(prompt_password()))
+            else:
+                key = Path(args.key_file).resolve()
+            restored = unpack(Path(args.archive).resolve(), key, Path(args.output).absolute())
+            if args.apply:
+                apply_restore(restored, key)
+                print('Бот восстановлен и оставлен остановленным. Подключи новый VPS к NetBird, останови старую копию бота и запусти службу.')
+            else:
+                print('Копия проверена и распакована:', restored)
+                print('Система не изменена. Каталог содержит секреты; сохрани права 700.')
+
 
 
 if __name__ == '__main__':

@@ -23,6 +23,8 @@ class DeliveryTests(unittest.TestCase):
         conf.mkdir(parents=True)
         (conf/'config.json').write_text(json.dumps({'admin_id': ADMIN}))
         (conf/'telegram_token').write_text(TOKEN)
+        (conf/'backup.key').write_text('private-old-key')
+        (conf/'backup.key').chmod(0o600)
         self.out = self.root/'var/backups/xtls-router-bot'
         self.out.mkdir(parents=True)
         self.archive = self.out/'xtls-bot-20261020T090000Z-abcdef.tar.gpg'

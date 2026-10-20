@@ -9,14 +9,14 @@ systemctl is-active --quiet xtls-router-bot.service || {
 }
 work=$(mktemp -d /tmp/xtls-daily-backup.XXXXXX)
 trap 'rm -rf "$work"' EXIT
-ref=db375e5cc01fc84daa72833e9394ef91a9a9fe26
+ref=fc3dbef5d3f71113727b090a703015c60e4f5e89
 base="https://raw.githubusercontent.com/djing1e/xtlsproVPN-for-OpenWRT/$ref/integrations/router-bot/server"
 for file in backup.py install-daily-backup.py; do
     curl -fLsS --connect-timeout 10 --max-time 60 "$base/$file" -o "$work/$file"
 done
 cd "$work"
 sha256sum -c - <<'SUMS'
-78773957a9148a050ee60020eb0952dbb9aad5e23962daf7d605fd1d0b0dc96f  backup.py
+5cd39e334a41dc609c4a4359926a408641e4d33fe4d5e27dd582c7304aebc90a  backup.py
 8f2aebd3337ae614816c9f3b256c605730350ced1a9413eaadf056aefda97d1b  install-daily-backup.py
 SUMS
 python3 ./install-daily-backup.py
