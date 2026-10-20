@@ -1,0 +1,12 @@
+[Unit]
+Description=Fixed administrative operations for xtlsproVPN router bot
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -B /opt/xtls-router-bot/operator_worker.py
+User=root
+UMask=0077
+TimeoutStartSec=10min
+PrivateTmp=yes
+LimitCORE=0

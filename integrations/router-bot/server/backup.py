@@ -30,7 +30,11 @@ FILES = {
     'etc/systemd/system/xtls-router-bot.service': 0o644,
 }
 OPTIONAL_FILES = {APP + 'fleet.py': 0o644, APP + 'connect.py': 0o644,
-                  'usr/local/sbin/xtls-router-add': 0o755}
+                  'usr/local/sbin/xtls-router-add': 0o755,
+                  APP+'operator_client.py':0o644,APP+'operator_worker.py':0o644,
+                  'etc/systemd/system/xtls-router-bot-operator.service':0o644,
+                  'etc/systemd/system/xtls-router-bot-operator.path':0o644}
+OPERATOR_FILES={APP+'operator_client.py',APP+'operator_worker.py','etc/systemd/system/xtls-router-bot-operator.service','etc/systemd/system/xtls-router-bot-operator.path'}
 ALL_FILES = {**FILES, **OPTIONAL_FILES}
 SERVICE = '''[Unit]
 Description=Encrypted xtlsproVPN bot backup
@@ -100,6 +104,8 @@ def read_archive(path):
         manifest = json.loads(data.pop('manifest.json'))
         if manifest.get('format') != 1 or manifest.get('files') != {n: sha(d) for n, d in data.items()}:
             raise BackupError('Контрольные суммы архива не совпали.')
+        if OPERATOR_FILES.intersection(data) and not OPERATOR_FILES.issubset(data):
+            raise BackupError('Неполный комплект административного обработчика.')
         config = json.loads(data[CONF + 'config.json'])
         expected = {'database': '/' + STATE + 'bot.sqlite3',
                     'ssh_key': '/' + STATE + '.ssh/id_ed25519',
@@ -204,7 +210,23 @@ def create(root=Path('/'), stage_base=Path('/run')):
         return final
 
 
+def operator_layout(root=Path('/'),activate=True):
+    unit=root_path(root,'etc/systemd/system/xtls-router-bot-operator.path')
+    if not unit.exists():return
+    user=pwd.getpwnam('xtlsrouterbot')
+    inbox=root_path(root,STATE+'operator-inbox')
+    inbox.mkdir(parents=True,exist_ok=True,mode=0o700)
+    os.chmod(inbox,0o700);os.chown(inbox,user.pw_uid,user.pw_gid)
+    results=root_path(root,'var/lib/xtls-router-operator')
+    results.mkdir(parents=True,exist_ok=True,mode=0o755)
+    os.chmod(results,0o755);os.chown(results,0,0)
+    if activate:
+        subprocess.run(['systemctl','daemon-reload'],check=True)
+        subprocess.run(['systemctl','enable','--now','xtls-router-bot-operator.path'],check=True)
+
+
 def install(root=Path('/'), activate=True):
+    operator_layout(root,activate)
     if not shutil.which('gpg'):
         raise BackupError('Установи gnupg перед настройкой копий.')
     root_path(root, CONF).mkdir(parents=True, exist_ok=True, mode=0o755)
