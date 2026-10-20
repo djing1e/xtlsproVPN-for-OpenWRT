@@ -17,12 +17,16 @@ if ! /usr/bin/xray-lab-bot prepare "$work/profile.json" > "$work/prepare.log" 2>
     cat "$work/prepare.log"
     fail 'Подготовка не завершена; регистрация на VPS не выполнялась.'
 fi
-# Update only the restricted public bridge; identity, keys and routing are kept.
-curl -fLsS --connect-timeout 10 --max-time 60 \
-    https://raw.githubusercontent.com/djing1e/xtlsproVPN-for-OpenWRT/9ed38bcc42e8afe4d0ab6417868b31b8d7aa6352/integrations/router-bot/router/upgrade-hwid.sh \
-    -o "$work/upgrade-hwid.sh"
-printf '%s  %s\n' ac35aaaba77dd912dcba5cb3cdaee13f840950b470cfa34579c7915a2288eb6d "$work/upgrade-hwid.sh" | sha256sum -c -
-sh "$work/upgrade-hwid.sh"
+# New packages already carry the canonical HWID bridge. Keep the pinned fallback
+# only for older 1.4.0 installations; do not overwrite a newer bundled bridge.
+if ! grep -Fq 'hwid:subscription_hwid()' /etc/xtlspro-bot/ssh.uc 2>/dev/null; then
+    # Update only the restricted public bridge; identity, keys and routing are kept.
+    curl -fLsS --connect-timeout 10 --max-time 60 \
+        https://raw.githubusercontent.com/djing1e/xtlsproVPN-for-OpenWRT/9ed38bcc42e8afe4d0ab6417868b31b8d7aa6352/integrations/router-bot/router/upgrade-hwid.sh \
+        -o "$work/upgrade-hwid.sh"
+    printf '%s  %s\n' ac35aaaba77dd912dcba5cb3cdaee13f840950b470cfa34579c7915a2288eb6d "$work/upgrade-hwid.sh" | sha256sum -c -
+    sh "$work/upgrade-hwid.sh"
+fi
 passport=/root/xtls-router-passport.json
 host=$(jsonfilter -i "$passport" -e '@.host')
 port=$(jsonfilter -i "$passport" -e '@.port')

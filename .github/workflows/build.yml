@@ -2,7 +2,7 @@ name: xtlsproVPN ARM64 package (development)
 on:
   workflow_dispatch:
   push:
-    branches: ['main', 'fix/safe-subscription-apply', 'feature/netbird-admin', 'feature/package-ui', 'feature/low-memory-sync', 'feature/router-admin-updates', 'feature/netbird-recovery', 'feature/router-bot', 'feature/wrapper-guard']
+    branches: ['main', 'fix/safe-subscription-apply', 'feature/netbird-admin', 'feature/package-ui', 'feature/low-memory-sync', 'feature/router-admin-updates', 'feature/netbird-recovery', 'feature/router-bot', 'feature/wrapper-guard', 'release/v1.4.1']
     tags: ['v1.0.0*']
     paths-ignore:
       - 'README.md'
@@ -87,9 +87,11 @@ jobs:
       - name: Build APK with official OpenWrt SDK
         run: |
           bash scripts/build-sdk.sh
-          python3 scripts/make-update-manifest.py dist/xtlsprovpn-1.4.0-r1.apk --output dist/update.json
+          python3 scripts/make-update-manifest.py dist/xtlsprovpn-1.4.1-r1.apk --output dist/update.json
+          python3 scripts/package-router-bot.py --output dist/xtls-router-bot-1.4.1.tar.gz
+          (cd dist && sha256sum ./xtlsprovpn-1.4.1-r1.apk ./xtls-router-bot-1.4.1.tar.gz > SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
-          name: xtlsprovpn-1.4.0-openwrt-25.12.5-arm64
+          name: xtlsprovpn-1.4.1-openwrt-25.12.5-arm64
           path: dist/*
           if-no-files-found: error

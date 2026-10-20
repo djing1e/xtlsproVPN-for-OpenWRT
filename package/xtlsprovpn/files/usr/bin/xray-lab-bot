@@ -5,6 +5,8 @@ base=/usr/share/xray/bot
 [ "$(id -u)" = 0 ] || { echo 'Запусти от root.';exit 1; }
 (cd "$base" && sha256sum -c bundle.sha256 >/dev/null) || { echo 'Повреждён комплект обработчиков бота.';exit 1; }
 case "${1:-}" in
+join) [ "$#" = 2 ] || exit 1;exec sh "$base/join.sh" "$2" ;;
+guard-wrapper) [ "$#" = 1 ] || exit 1;exec sh "$base/enable-wrapper-guard.sh" ;;
 prepare) [ "$#" = 2 ] || exit 1;exec sh "$base/onboard.sh" "$2" ;;
 status) [ "$#" = 1 ] || exit 1;exec ucode /etc/xtlspro-bot/onboard.uc identity ;;
 refresh)
@@ -19,5 +21,5 @@ refresh)
         fi
     else exec sh "$base/refresh.sh";fi
     ;;
-*) echo 'Usage: xray-lab-bot prepare PROFILE.json | status | refresh';exit 1 ;;
+*) echo 'Usage: xray-lab-bot prepare PROFILE.json | join PROFILE_CODE | status | refresh | guard-wrapper';exit 1 ;;
 esac
