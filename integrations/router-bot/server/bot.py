@@ -295,11 +295,16 @@ def ssh_command(config, router, command):
             '-o', 'PasswordAuthentication=no', '-o', 'KbdInteractiveAuthentication=no',
             '-o', 'StrictHostKeyChecking=yes',
             '-o', 'UserKnownHostsFile=' + config['known_hosts'],
+            '-o', 'GlobalKnownHostsFile=/dev/null',
             '-o', 'ConnectTimeout=5', '-o', 'ConnectionAttempts=1',
             '-o', 'ServerAliveInterval=5', '-o', 'ServerAliveCountMax=2',
             '-o', 'ClearAllForwardings=yes',
             '-i', config['ssh_key'], '-p', str(router['port']),
             'root@' + router['host'], command]
+
+
+class TransportError(SafeError):
+    """Transport failed; mutations must never be replayed automatically."""
 
 
 class Bridge:
@@ -312,19 +317,48 @@ class Bridge:
         allowed |= bool(re.fullmatch(r'xtlsbot-v1 job [a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}', command))
         if not allowed:
             raise SafeError('Недопустимая операция.')
+        readonly = command in ('xtlsbot-v1 status', 'xtlsbot-v1 locations', 'xtlsbot-v1 diagnostics') or command.startswith('xtlsbot-v1 job ')
+        endpoints = [('netbird', router)]
+        if router.get('rescue'):
+            endpoints.append(('rescue', router['rescue']))
+        for index, (transport, endpoint) in enumerate(endpoints):
+            try:
+                # Probe before a mutation, then dispatch it exactly once. An SSH
+                # failure after dispatch may mean the operation was accepted.
+                if not readonly and len(endpoints) > 1:
+                    self._call_once(endpoint, 'xtlsbot-v1 status')
+                elif readonly:
+                    data = self._call_once(endpoint, command)
+                    return {**data, '_transport': transport}
+            except TransportError:
+                if index + 1 < len(endpoints):
+                    continue
+                raise TransportError('Роутер недоступен по настроенным каналам.') from None
+            try:
+                data = self._call_once(endpoint, command)
+            except TransportError:
+                raise SafeError('Ответ на операцию потерян. Выполнение не подтверждено; команда повторно не отправлена. Проверьте статус роутера.') from None
+            return {**data, '_transport': transport}
+
+    def _call_once(self, router, command):
         try:
             result = subprocess.run(ssh_command(self.config, router, command),
                                     capture_output=True, timeout=23)
             # Never send raw SSH stderr, config or router response to Telegram.
             if len(result.stdout) > 262144:
                 raise SafeError('Некорректный ответ роутера.')
+            if result.returncode == 255:
+                raise TransportError('Нет ответа от роутера по SSH.')
             reply = json.loads(result.stdout)
-        except (OSError, ValueError, subprocess.TimeoutExpired):
-            raise SafeError('Нет ответа от роутера по SSH.') from None
+        except (OSError, subprocess.TimeoutExpired):
+            raise TransportError('Нет ответа от роутера по SSH.') from None
+        except ValueError:
+            raise SafeError('Некорректный ответ роутера.') from None
         if not isinstance(reply, dict) or reply.get('schema') != 1:
             raise SafeError('Версия обработчика роутера не поддерживается.')
         if result.returncode or reply.get('ok') is not True:
-            code = reply.get('error', {}).get('code')
+            error = reply.get('error')
+            code = error.get('code') if isinstance(error, dict) else None
             messages = {
                 'busy': 'На роутере уже выполняется операция. Повторите позже.',
                 'unknown_location': 'Список локаций изменился. Откройте его заново.',
@@ -348,12 +382,22 @@ def load_config(path):
             raise ValueError('absolute path required')
     if not config.get('routers'):
         raise ValueError('routers')
+    rescue_ports = set()
     for rid, router in config['routers'].items():
         if not re.fullmatch(r'[a-z0-9_-]{1,32}', rid):
             raise ValueError('router id')
         ipaddress.ip_address(router['host'])
         if type(router.get('port')) is not int or not 1 <= router['port'] <= 65535:
             raise ValueError('router port')
+        if 'rescue' in router:
+            rescue = router['rescue']
+            if not isinstance(rescue, dict) or set(rescue) != {'host', 'port'}:
+                raise ValueError('rescue endpoint')
+            if rescue['host'] != '127.0.0.1' or type(rescue['port']) is not int or not 1024 <= rescue['port'] <= 65535:
+                raise ValueError('rescue loopback port')
+            if rescue['port'] in rescue_ports:
+                raise ValueError('duplicate rescue port')
+            rescue_ports.add(rescue['port'])
     return config
 
 
@@ -556,6 +600,8 @@ class Bot:
                 f"Локация: {', '.join(names) or 'нет данных'}\n"
                 f"Последняя проверка прокси: {health}\nВерсия: {str(data.get('version', '—'))[:40]}" +
                 '\n\n' + self.subscription_text(data.get('subscription')))
+        if uid == self.config['admin_id'] and data.get('_transport'):
+            text += '\nКанал управления: ' + ('аварийный SSH' if data['_transport'] == 'rescue' else 'NetBird')
         rows = [[self.button(uid, rid, '🌍 Локации', 'locations'),
                  self.button(uid, rid, '🔄 Статус', 'status')],
                 [self.button(uid, rid, '⚡ Автовыбор', 'auto'),

@@ -77,3 +77,26 @@ Acceptance: check-only changes nothing; repeat clicks install at most once;
 metadata/identity checks pass after install; interrupted transport is reconciled
 with the correlated router job and subsequent health checks. Test LAB before any
 client rollout. Firmware replacement needs its own backup/rollback procedure.
+
+## Co-located bot and emergency endpoint
+
+A bot VPS may also terminate router reverse tunnels. Each router uses a separate
+restricted sshd account/key and unique loopback listener. In this topology the
+bot needs no SSH gateway account: it connects directly to 127.0.0.1 on its own VPS
+with the existing forced-command router identity. A failure of this VPS affects
+both the bot and rescue access; the encrypted off-site backup remains necessary.
+
+Optional router config: `"rescue":{"host":"127.0.0.1","port":22002}`.
+Only loopback endpoints with unique nonprivileged ports are accepted. Use
+`server/enroll_rescue.py --router ROUTER_ID --port PORT --host-key 'ssh-ed25519 KEY'`
+after updating the application. Enrollment requires the rescue host key to equal
+the already pinned primary router key, preserves file ownership, backs up config
+and known_hosts, and rolls back both on startup failure. Rescue pins share the
+existing known_hosts file and are included in encrypted backups/restores.
+
+Reads retry through rescue only on SSH transport failure. Protocol errors and
+router rejections are not retried. With rescue configured, mutations first probe
+status to select a reachable channel, then dispatch exactly once. A lost mutation
+response is unconfirmed and must never be automatically reissued through the
+other channel. Job polling may switch channels because it is read-only. The
+administrator's status card shows the channel used for its status snapshot.
