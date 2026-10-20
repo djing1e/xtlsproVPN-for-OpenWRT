@@ -26,12 +26,13 @@ class CardVersionFix(unittest.TestCase):
 import os,shutil,sys
 from pathlib import Path
 args=sys.argv[1:]; cmd=Path(sys.argv[0]).name
-if cmd=='apk': print('xtlsprovpn-1.4.1-r1')
+if cmd=='id': print('0')
+elif cmd=='apk': print('xtlsprovpn-1.4.1-r1')
 elif cmd=='curl':
  dst=Path(args[args.index('-o')+1]);src=Path(os.environ['FIX_LIB'])/dst.name
  dst.write_bytes(b'corrupt' if os.environ['FIX_MODE']=='corrupt' else src.read_bytes())
 '''
-            for name in ('apk','curl'):
+            for name in ('id','apk','curl'):
                 (r/'bin'/name).write_text(mock);(r/'bin'/name).chmod(0o755)
             (r/'bin/ucode').write_text('#!/bin/sh\nexec '+shutil.which('ucode')+' -L '+str(r/'mods')+' "$@"\n')
             (r/'bin/ucode').chmod(0o755)
