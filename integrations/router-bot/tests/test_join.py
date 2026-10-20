@@ -24,7 +24,7 @@ print('xtls-enroll-v1:LONG-LEGACY-PASSPORT')
         curl=self.bins/'curl';curl.write_text('#!/bin/sh\nwhile [ "$#" -gt 0 ]; do if [ "$1" = -o ]; then shift; cp "$JOIN_UPGRADE" "$1"; exit 0; fi; shift; done; exit 1\n');curl.chmod(0o700)
         self.payload=payload
         self.script=self.root/'join.sh' 
-        self.script.write_text((BASE/'router/join.sh').read_text().replace('/usr/bin/xray-lab-bot',str(controller)).replace('/root/xtls-router-passport.json',str(self.passport)).replace('ac35aaaba77dd912dcba5cb3cdaee13f840950b470cfa34579c7915a2288eb6d',hashlib.sha256(payload.read_bytes()).hexdigest()))
+        self.script.write_text((BASE/'router/join.sh').read_text().replace('/usr/bin/xray-lab-bot',str(controller)).replace('/root/xtls-router-passport.json',str(self.passport)).replace('/etc/xtlspro-bot/ssh.uc',str(self.root/'bridge.uc')).replace('ac35aaaba77dd912dcba5cb3cdaee13f840950b470cfa34579c7915a2288eb6d',hashlib.sha256(payload.read_bytes()).hexdigest()))
         self.env=dict(os.environ,PATH=str(self.bins)+':'+os.environ['PATH'],JOIN_CALLS=str(self.calls),JOIN_PASSPORT=str(self.passport),JOIN_UPGRADE=str(payload))
     def call(self,code):return subprocess.run(['sh',str(self.script),code],env=self.env,capture_output=True,text=True,timeout=15)
     def test_one_command_prepares_profile_and_prints_only_compact_pair_code(self):
@@ -33,6 +33,15 @@ print('xtls-enroll-v1:LONG-LEGACY-PASSPORT')
         self.assertIn('xtls-pair-v1:100.124.249.61:22:'+FP,r.stdout)
         self.assertNotIn('LONG-LEGACY-PASSPORT',r.stdout)
         self.assertEqual(self.calls.read_text(),'preparehwid')
+    def test_new_bundle_skips_legacy_hwid_download(self):
+        (self.root/'bridge.uc').write_text('hwid:subscription_hwid()')
+        self.payload.unlink()
+        code='xtls-profile-v1:'+base64.b64encode(json.dumps({'schema':1}).encode()).decode()
+        r=self.call(code)
+        self.assertEqual(r.returncode,0,r.stdout+r.stderr)
+        self.assertEqual(self.calls.read_text(),'prepare')
+        self.assertIn('xtls-pair-v1:',r.stdout)
+
     def test_bad_hwid_upgrade_checksum_never_reports_pairing_success(self):
         self.payload.write_text('corrupt')
         code='xtls-profile-v1:'+base64.b64encode(json.dumps({'schema':1}).encode()).decode()

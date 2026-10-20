@@ -6,7 +6,7 @@ from pathlib import Path
 import shutil
 
 ROOT=Path(__file__).resolve().parents[1]
-FILES=('ssh.uc','ssh-entry','admin.uc','admin-worker','updates.uc','update-worker','onboard.uc','onboard.sh','install.sh','refresh.sh')
+FILES=('ssh.uc','ssh-entry','admin.uc','admin-worker','updates.uc','update-worker','onboard.uc','onboard.sh','install.sh','refresh.sh','join.sh','enable-wrapper-guard.sh')
 
 
 def stage(destination):

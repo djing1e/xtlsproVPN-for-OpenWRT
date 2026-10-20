@@ -14,7 +14,7 @@ done
 work=$(mktemp -d /tmp/xtls-backup-password.XXXXXX)
 staged=''
 trap 'rm -rf "$work"; [ -z "$staged" ] || rm -f "$staged"' EXIT
-ref=fc3dbef5d3f71113727b090a703015c60e4f5e89
+ref=1379dbc4b0017e63a9d0a37ff188b1a2fa38c720
 base="https://raw.githubusercontent.com/djing1e/xtlsproVPN-for-OpenWRT/$ref/integrations/router-bot/server"
 curl -fLsS --connect-timeout 10 --max-time 60 "$base/backup.py" -o "$work/backup.py"
 cd "$work"
