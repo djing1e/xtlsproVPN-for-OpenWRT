@@ -66,6 +66,8 @@ class Store:
                 CREATE TABLE IF NOT EXISTS grants (
                     uid INTEGER, router TEXT, epoch TEXT NOT NULL, created INTEGER,
                     PRIMARY KEY(uid,router));
+                CREATE TABLE IF NOT EXISTS input_dialogs (
+                    uid INTEGER PRIMARY KEY, router TEXT, expires INTEGER);
                 CREATE TABLE IF NOT EXISTS access_audit (
                     id INTEGER PRIMARY KEY, actor INTEGER, uid INTEGER,
                     router TEXT, action TEXT, created INTEGER);
@@ -125,6 +127,25 @@ class Store:
             db.execute('UPDATE operations SET state=?,job=coalesce(?,job) WHERE update_id=?',
                        (state, job, update_id))
 
+
+    def set_dialog(self, uid, rid):
+        with self.connect() as db:
+            db.execute('INSERT INTO input_dialogs VALUES (?,?,?) ON CONFLICT(uid) DO UPDATE SET router=excluded.router,expires=excluded.expires',
+                       (uid, rid, int(time.time()) + 600))
+
+    def dialog(self, uid):
+        with self.connect() as db:
+            db.execute('DELETE FROM input_dialogs WHERE expires < ?', (int(time.time()),))
+            row = db.execute('SELECT router FROM input_dialogs WHERE uid=?', (uid,)).fetchone()
+            return row[0] if row else None
+
+    def clear_dialog(self, uid):
+        with self.connect() as db:
+            db.execute('DELETE FROM input_dialogs WHERE uid=?', (uid,))
+
+    def cancel_confirmations(self, uid, rid):
+        with self.connect() as db:
+            db.execute("DELETE FROM buttons WHERE uid=? AND router=? AND action IN ('grant','revoke')", (uid, rid))
 
     def grant_epoch(self, uid, rid):
         with self.connect() as db:
@@ -283,9 +304,11 @@ class Bot:
     def menu(self, uid):
         rows = [[self.button(uid, rid, router['name'], 'status')]
                 for rid, router in self.config['routers'].items() if rid in self.visible(uid)]
+        if rows:
+            first = next(rid for rid in self.config['routers'] if rid in self.visible(uid))
+            rows.append([self.button(uid, first, '🆔 Мой ID', 'whoami'),
+                         self.button(uid, first, 'ℹ️ Помощь', 'help')])
         self.send(uid, 'xtlsproVPN · Управление роутерами\nВыберите роутер:', rows)
-        if uid == self.config['admin_id']:
-            self.send(uid, 'Управление доступом: /help')
 
     def status(self, uid, rid, epoch=None):
         self.authorize(uid, rid)
@@ -306,6 +329,7 @@ class Bot:
                 [self.button(uid, rid, '⚡ Автовыбор', 'auto')]]
         if uid == self.config['admin_id']:
             rows.append([self.button(uid, rid, '👥 Доступ клиентов', 'access')])
+        rows.append([self.button(uid, rid, '🏠 Мои роутеры', 'menu')])
         self.send_router(uid, rid, text, rows, epoch)
 
     def locations(self, uid, rid, epoch=None):
@@ -318,7 +342,8 @@ class Bot:
             label = ('✅ ' if node.get('selected') else '') + str(node.get('name', 'Локация'))[:100]
             rows.append([self.button(uid, rid, label, 'select', node['id'])])
         rows.append([self.button(uid, rid, '⚡ Автовыбор', 'auto')])
-        rows.append([self.button(uid, rid, '← Статус', 'status')])
+        rows.append([self.button(uid, rid, '← Статус', 'status'),
+                     self.button(uid, rid, '🏠 Мои роутеры', 'menu')])
         self.send_router(uid, rid, self.config['routers'][rid]['name'] + ' · Выберите локацию:', rows, epoch)
 
     def switch(self, uid, rid, action, target, update_id, epoch=None):
@@ -364,16 +389,20 @@ class Bot:
     def access(self, uid, rid):
         self.admin(uid)
         self.authorize(uid, rid)
+        self.store.clear_dialog(uid)
+        self.store.cancel_confirmations(uid, rid)
         clients = self.store.clients(rid)
         lines = [self.config['routers'][rid]['name'] + ' · Доступ клиентов',
                  'ID роутера: ' + rid]
         lines.extend('• Telegram ID ' + str(client) for client in clients[:40])
         if not clients:
             lines.append('Клиенты пока не привязаны.')
-        lines.append('Выдать доступ: /bind ' + rid + ' TELEGRAM_ID')
-        lines.append('Отозвать: /unbind ' + rid + ' TELEGRAM_ID')
+        lines.append('Добавьте клиента или выберите, чей доступ отозвать.')
         rows = [[self.button(uid, rid, 'Отозвать ' + str(client), 'revoke_prompt', str(client))]
                 for client in clients[:40]]
+        rows.insert(0, [self.button(uid, rid, '➕ Добавить клиента', 'grant_input')])
+        rows.append([self.button(uid, rid, '← Статус', 'status'),
+                     self.button(uid, rid, '🏠 Мои роутеры', 'menu')])
         self.send(uid, '\n'.join(lines), rows)
 
     def access_prompt(self, uid, rid, target, grant):
@@ -391,6 +420,32 @@ class Bot:
         rows = [[self.button(uid, rid, 'Подтвердить', 'grant' if grant else 'revoke', target)],
                 [self.button(uid, rid, 'Отмена', 'access')]]
         self.send(uid, text, rows)
+
+    def grant_input(self, uid, rid):
+        self.admin(uid)
+        self.authorize(uid, rid)
+        self.store.cancel_confirmations(uid, rid)
+        self.store.set_dialog(uid, rid)
+        text = ('Добавить клиента к ' + self.config['routers'][rid]['name'] +
+                '\nОтправьте следующим сообщением числовой Telegram ID клиента.'
+                '\nКлиент видит свой ID при первом запуске бота.'
+                '\nПосле ввода появится подтверждение. Ожидание — 10 минут.')
+        self.send(uid, text, [[self.button(uid, rid, 'Отмена', 'access')]])
+
+    def help(self, uid):
+        self.authorize(uid)
+        text = ('Выберите роутер, затем откройте «Локации» или нажмите «Автовыбор».'
+                '\nКнопка «Мои роутеры» возвращает в главное меню.')
+        if uid == self.config['admin_id']:
+            text += ('\n\nВыдача доступа: роутер → «Доступ клиентов» → «Добавить клиента».'
+                     '\nОтзыв: «Доступ клиентов» → «Отозвать» рядом с Telegram ID.'
+                     '\n\nЗапасные команды: /start, /whoami, /help'
+                     '\n/bind ROUTER_ID TELEGRAM_ID'
+                     '\n/unbind ROUTER_ID TELEGRAM_ID'
+                     '\n/access ROUTER_ID\nРоутеры:\n' +
+                     '\n'.join(rid + ' — ' + r['name'] for rid, r in self.config['routers'].items()))
+        first = next(rid for rid in self.config['routers'] if rid in self.visible(uid))
+        self.send(uid, text, [[self.button(uid, first, '🏠 Мои роутеры', 'menu')]])
 
     def admin_command(self, uid, text):
         self.admin(uid)
@@ -425,19 +480,21 @@ class Bot:
         try:
             if not callback:
                 text = message.get('text', '').strip()
-                if text == '/whoami':
+                dialog = self.store.dialog(uid) if uid == self.config['admin_id'] else None
+                if dialog and not text.startswith('/'):
+                    self.access_prompt(uid, dialog, text, True)
+                    self.store.clear_dialog(uid)
+                elif text == '/whoami':
+                    self.store.clear_dialog(uid)
                     self.inform(uid, 'Ваш Telegram ID: ' + str(uid))
                 elif text == '/help':
-                    help_text = '/start — мои роутеры\n/whoami — мой Telegram ID'
-                    if uid == self.config['admin_id']:
-                        help_text += ('\n/bind ROUTER_ID TELEGRAM_ID — выдать доступ (с подтверждением)'
-                                      '\n/unbind ROUTER_ID TELEGRAM_ID — отозвать доступ (с подтверждением)'
-                                      '\n/access ROUTER_ID — список привязок\nРоутеры:\n' +
-                                      '\n'.join(rid + ' — ' + r['name'] for rid, r in self.config['routers'].items()))
-                    self.send(uid, help_text)
+                    self.store.clear_dialog(uid)
+                    self.help(uid)
                 elif text.startswith(('/bind', '/unbind', '/access')):
+                    self.store.clear_dialog(uid)
                     self.admin_command(uid, text)
                 else:
+                    self.store.clear_dialog(uid)
                     self.menu(uid)
                 return
             self.tg.call('answerCallbackQuery', callback_query_id=callback['id'])
@@ -445,12 +502,21 @@ class Bot:
             rid, action, target = button['router'], button['action'], button['target']
             epoch = button['grant_epoch']
             self.authorize(uid, rid, epoch)
-            if action == 'status':
+            self.store.clear_dialog(uid)
+            if action == 'menu':
+                self.menu(uid)
+            elif action == 'help':
+                self.help(uid)
+            elif action == 'whoami':
+                self.inform(uid, 'Ваш Telegram ID: ' + str(uid))
+            elif action == 'status':
                 self.status(uid, rid, epoch)
             elif action == 'locations':
                 self.locations(uid, rid, epoch)
             elif action == 'access':
                 self.access(uid, rid)
+            elif action == 'grant_input':
+                self.grant_input(uid, rid)
             elif action == 'revoke_prompt':
                 self.access_prompt(uid, rid, target, False)
             elif action in ('grant', 'revoke'):

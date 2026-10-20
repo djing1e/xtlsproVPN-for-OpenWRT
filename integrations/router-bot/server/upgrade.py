@@ -96,7 +96,7 @@ def main():
         raise
     print('Обновлено. Резервная копия:', backup)
     print('Токен, конфигурация, SSH-ключ и known_hosts сохранены.')
-    print('Привязки: /bind lab TELEGRAM_ID; отзыв: /unbind lab TELEGRAM_ID; справка: /help.')
+    print('Открой бота: роутер → «Доступ клиентов» → «Добавить клиента».')
 
 
 if __name__ == '__main__':

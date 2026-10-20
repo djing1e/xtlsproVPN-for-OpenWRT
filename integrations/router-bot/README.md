@@ -133,3 +133,21 @@ Router services and the stable APK are not touched. Test with a second Telegram
 account: unbound start, grant, own-router switch, revoke, old-button refusal,
 regrant and restart persistence. First live administrator selection through the
 Telegram interface was confirmed on LAB before this client-access extension.
+
+
+## Button navigation
+
+Administrator flow: router → Client access → Add client → enter numeric Telegram
+ID → confirm. Client access lists revoke buttons; each revoke still requires
+confirmation. Navigation provides My routers, Status, My ID and Help buttons.
+Existing slash commands remain available for support but are not required for
+normal grant/revoke operations. New users still use Telegram's initial Start.
+
+The input dialog is bound to the administrator and selected router, persists in
+SQLite and expires after ten minutes. Invalid input cannot grant access; it keeps
+the dialog open for correction. Cancel or any other valid callback closes the
+input dialog; cancelling confirmation invalidates pending access confirmations
+for that router. Clients cannot start this dialog even through forged callbacks.
+Only the final single-use confirmation changes grants. Existing grants, audit,
+SSH policy and job semantics are unchanged. Client enrollment/revocation was
+reported working by the operator before this button-navigation refinement.
