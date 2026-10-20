@@ -26,6 +26,13 @@ class SetupConnectTests(unittest.TestCase):
         for digest,name in entries:self.assertEqual(hashlib.sha256((SERVER/name).read_bytes()).hexdigest(),digest)
         subprocess.run(['sh','-n',str(SERVER/'setup-catalog.sh')],check=True)
 
+    def test_daily_backup_manifest_matches_reviewed_sources(self):
+        source=(SERVER/'setup-daily-backup.sh').read_text()
+        entries=re.findall(r'^([a-f0-9]{64})  ([a-zA-Z0-9_.-]+)$',source,re.M)
+        self.assertEqual(len(entries),2)
+        for digest,name in entries:self.assertEqual(hashlib.sha256((SERVER/name).read_bytes()).hexdigest(),digest)
+        subprocess.run(['sh','-n',str(SERVER/'setup-daily-backup.sh')],check=True)
+
     def test_corrupt_download_stops_before_backup_or_install(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);binpath=root/'bin';binpath.mkdir()
