@@ -29,6 +29,7 @@ cd "$work/sdk"
 ./scripts/feeds install -a
 mkdir -p package/xtlsprovpn
 cp -R "$project/package/xtlsprovpn/." package/xtlsprovpn/
+python3 "$project/scripts/stage-bot-bundle.py" "$work/sdk/package/xtlsprovpn/files/usr/share/xray/bot"
 cat > .config <<'CONFIG'
 CONFIG_ALL=n
 CONFIG_ALL_KMODS=n

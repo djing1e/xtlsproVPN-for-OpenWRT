@@ -1,0 +1,40 @@
+name: Prepare or publish v1.4.0 router bot release
+on:
+  push:
+    branches: ['main']
+    paths:
+      - '.github/workflows/release-v140.yml'
+      - 'scripts/publish-v140.sh'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish stable release after LAB enrollment, transport, reboot and helper refresh verification
+        required: true
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: publish-v140
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify package source matches tested r1 build
+        run: git diff --exit-code fc82d8676b7499516366aeb90e08ea1391678624 HEAD -- package/xtlsprovpn integrations/router-bot/router scripts/stage-bot-bundle.py scripts/build-sdk.sh
+      - name: Check stable entry-point behavior
+        run: python3 -m unittest discover -s tests -p test_install_links.py
+      - name: Verify exact APK and prepare draft or publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISH_RELEASE: ${{ github.event_name == 'push' || inputs.publish }}
+        run: bash scripts/publish-v140.sh

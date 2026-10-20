@@ -99,6 +99,8 @@ function package_catalog(refresh) {
 function upgrade_package() {
     if (!fs.stat(BIN) || !fs.stat(SERVICE)) die('Сначала установите NetBird');
     let c=package_catalog(true);
+    let expected=getenv('FX_NETBIRD_EXPECTED_VERSION');
+    if (expected && c.available!=expected) die('Каталог NetBird изменился. Проверьте версию заново перед установкой.');
     if (!c.update_available) return 'В репозитории OpenWrt обновление NetBird не требуется. Релизы upstream могут отличаться.';
     let mem=match(fs.readfile('/proc/meminfo') || '',/MemAvailable:[[:space:]]*([0-9]+)/);
     if (int(mem?.[1] || 0)<32768) die('Для обновления NetBird требуется 32 МиБ доступной RAM');

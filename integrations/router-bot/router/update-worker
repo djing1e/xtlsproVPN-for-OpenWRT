@@ -1,0 +1,113 @@
+#!/bin/sh
+set -eu
+umask 077
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+RUN=/var/run/xtlspro-bot-updates
+ADMIN=/var/run/xtlspro-bot-admin
+UC=/etc/xtlspro-bot/updates.uc
+fail() { printf '{"error":"%s"}\n' "$1"; exit 1; }
+case "${1:-}" in
+status) [ "$#" = 1 ] || exit 1; exec ucode "$UC" status ;;
+launch|worker) [ "$#" = 5 ] || exit 1 ;;
+*) exit 1 ;;
+esac
+action=$2; component=$3; id=$4; plan=$5
+case "$action" in check|install) ;; *) exit 1 ;; esac
+case "$component" in app|xray|netbird) ;; *) exit 1 ;; esac
+for value in "$id" "$plan"; do
+    printf '%s\n' "$value" | grep -Eq '^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$' || exit 1
+done
+mkdir -p "$RUN" "$ADMIN"
+chmod 700 "$RUN" "$ADMIN"
+state() { ucode "$UC" set "$component" "$id" "$action" "$1"; }
+if [ "$1" = launch ]; then
+    exec 7>"$ADMIN/action.lock"
+    flock -n 7 || fail busy
+    mkdir -p "$RUN/receipts"
+    if [ -f "$RUN/receipts/$id" ]; then cat "$RUN/receipts/$id"; exit 0; fi
+    if [ "$action" = install ]; then
+        ucode "$UC" validate "$component" "$plan" > "$RUN/expected.json" || { cat "$RUN/expected.json"; exit 1; }
+        now=$(cut -d. -f1 /proc/uptime)
+        last=$(cat "$ADMIN/last-mutation" 2>/dev/null || :)
+        case "$last" in ''|*[!0-9]*) ;; *) [ "$((now-last))" -ge 300 ] || fail cooldown ;; esac
+        printf '%s\n' "$now" > "$ADMIN/last-mutation"
+    fi
+    state pending
+    printf '{"accepted":true,"id":"%s","component":"%s","action":"%s"}\n' "$id" "$component" "$action" > "$RUN/receipts/$id"
+    (trap '' HUP; exec "$0" worker "$action" "$component" "$id" "$plan") </dev/null > "$RUN/job.log" 2>&1 &
+    cat "$RUN/receipts/$id"
+    exit 0
+fi
+[ -e /proc/self/fd/7 ] || exit 1
+finish() { rc=$?;trap - EXIT;if [ "$rc" = 0 ]; then state done;else state failed;fi;exit "$rc"; }
+trap finish EXIT
+trap '' HUP
+trap 'exit 1' INT TERM
+state running
+native_wait() {
+    file=$1; native_action=$2; start=$3
+    for attempt in $(seq 1 600); do
+        native_updated=$(jsonfilter -i "$file" -e '@.updated' 2>/dev/null || :)
+        case "$native_updated" in ''|*[!0-9]*) sleep 2; continue ;; esac
+        [ "$native_updated" -ge "$start" ] || { sleep 2; continue; }
+        [ "$(jsonfilter -i "$file" -e '@.action')" = "$native_action" ] || return 1
+        native_state=$(jsonfilter -i "$file" -e '@.state')
+        case "$native_state" in done) return 0 ;; pending|running) sleep 2 ;; *) return 1 ;; esac
+    done
+    return 1
+}
+if [ "$action" = install ]; then
+    ucode "$UC" validate "$component" "$plan" > "$RUN/expected.json"
+    version=$(jsonfilter -i "$RUN/expected.json" -e '@.version')
+    digest=$(jsonfilter -i "$RUN/expected.json" -e '@.digest' 2>/dev/null || :)
+    backup=$(mktemp -d /root/xtls-before-bot-update.XXXXXX)
+    set -- etc/config etc/dropbear
+    for path in etc/xtlspro-rescue etc/xtlspro-bot etc/netbird root/.config/netbird root/.ssh; do
+        [ ! -d "/$path" ] || set -- "$@" "$path"
+    done
+    tar -C / -czf "$backup/settings.tar.gz" "$@"
+    tar -tzf "$backup/settings.tar.gz" >/dev/null
+    : > "$backup/preserved.sha256"
+    for path in /etc/config/xray_core /etc/config/xray_lab_dns /etc/config/network /etc/config/dhcp /etc/config/xray_lab_rescue /etc/config/xray_lab_netbird /etc/xtlspro-rescue/id_ed25519 /etc/dropbear/dropbear_ed25519_host_key /root/.ssh/known_hosts; do
+        [ ! -f "$path" ] || sha256sum "$path" >> "$backup/preserved.sha256"
+    done
+    if [ "$component" != xray ] && [ -f /usr/libexec/forkop-xray/xray ]; then
+        sha256sum /usr/libexec/forkop-xray/xray >> "$backup/preserved.sha256"
+    fi
+    if [ "$component" != netbird ] && [ -f /usr/bin/netbird ]; then
+        sha256sum /usr/bin/netbird >> "$backup/preserved.sha256"
+    fi
+fi
+start=$(date +%s)
+case "$component:$action" in
+app:check|app:install)
+    if [ "$action" = check ]; then
+        xray-lab-package launch check 7>&- > "$RUN/native-receipt.json"
+    else xray-lab-package launch install "$version" "$digest" 7>&- > "$RUN/native-receipt.json"; fi
+    [ "$(jsonfilter -i "$RUN/native-receipt.json" -e '@.ok')" = true ]
+    native_wait /var/run/xtlspro-package/job.json "$action" "$start"
+    ;;
+xray:check) timeout -k 10 600 env FX_CORE_ALLOW_PRERELEASE=0 xray-lab-core list 7>&- ;;
+xray:install) timeout -k 10 900 env FX_CORE_ALLOW_PRERELEASE=0 xray-lab-core install "$version" 7>&- ;;
+netbird:check|netbird:install)
+    native_action=check_update
+    if [ "$action" = install ]; then
+        grep -Fq 'FX_NETBIRD_EXPECTED_VERSION' /usr/share/xray/lab/netbird.uc
+        native_action=update
+        FX_NETBIRD_EXPECTED_VERSION="$version" xray-lab-netbird launch update 7>&- > "$RUN/native-receipt.json"
+    else xray-lab-netbird launch check_update 7>&- > "$RUN/native-receipt.json"; fi
+    [ "$(jsonfilter -i "$RUN/native-receipt.json" -e '@.ok')" = true ]
+    native_wait /var/run/xtlspro-netbird/job.json "$native_action" "$start"
+    ;;
+esac
+if [ "$action" = check ]; then
+    ucode "$UC" plan "$component" "$id" > /dev/null
+else
+    ucode "$UC" verify "$component" "$plan"
+    sha256sum -c "$backup/preserved.sha256"
+    timeout -k 2 25 ucode /usr/share/xray/lab/control.uc health > "$RUN/health.json" 7>&-
+    [ "$(jsonfilter -i "$RUN/health.json" -e '@.proxy_ok')" = true ]
+    timeout -k 2 20 ucode /usr/share/xray/lab/dns_query.uc 53 ipv4 udp 7>&- > /dev/null
+    timeout -k 2 20 ucode /usr/share/xray/lab/dns_query.uc 53 ipv4 tcp 7>&- > /dev/null
+fi

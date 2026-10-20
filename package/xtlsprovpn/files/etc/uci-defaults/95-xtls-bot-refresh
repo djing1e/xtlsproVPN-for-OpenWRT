@@ -1,0 +1,5 @@
+#!/bin/sh
+[ -z "$IPKG_INSTROOT" ] || exit 0
+[ -f /etc/xtlspro-bot/profile.json ] || exit 0
+/usr/bin/xray-lab-bot refresh --defer >/dev/null 2>&1 || :
+exit 0
