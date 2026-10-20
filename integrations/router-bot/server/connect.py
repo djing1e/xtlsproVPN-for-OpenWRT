@@ -65,11 +65,20 @@ def router_command(profile):
     fields=('schema','profile_id','bot_public_key','rescue_host','rescue_port','rescue_host_key')
     public={field:profile[field] for field in fields}
     payload='xtls-profile-v1:'+base64.b64encode(json.dumps(public,separators=(',',':')).encode()).decode()
-    # Only public data; immutable source, checked hash and private staging directory.
-    return ('clear; ( set -e; umask 077; work=$(mktemp -d /tmp/xtls-bot-pair.XXXXXX); '+
-        "trap 'rm -rf \"$work\"' EXIT; curl -fL --connect-timeout 10 --max-time 60 "+shlex.quote(BOOTSTRAP_URL)+
-        ' -o "$work/join.sh"; '+"printf '%s  %s\\n' "+shlex.quote(BOOTSTRAP_SHA)+
-        ' "$work/join.sh" | sha256sum -c -; sh "$work/join.sh" '+shlex.quote(payload)+' )')
+    # Keep physical input lines short for BusyBox ash and terminal paste limits.
+    lines=['clear','(', '    set -e', '    umask 077',
+        '    work=$(mktemp -d /tmp/xtls-bot-pair.XXXXXX)',
+        "    trap 'rm -rf \"$work\"' EXIT",
+        '    curl -fL --connect-timeout 10 --max-time 60 \\',
+        '        '+shlex.quote(BOOTSTRAP_URL)+' \\',
+        '        -o "$work/join.sh"',
+        "    printf '%s  %s\\n' "+shlex.quote(BOOTSTRAP_SHA)+' "$work/join.sh" | sha256sum -c -',
+        "    profile=''" ]
+    for offset in range(0,len(payload),120):
+        lines.append('    profile="$profile"'+shlex.quote(payload[offset:offset+120]))
+    lines.extend(['    sh "$work/join.sh" "$profile"',')'])
+    return '\n'.join(lines)
+
 
 
 @contextmanager

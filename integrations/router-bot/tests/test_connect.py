@@ -23,9 +23,12 @@ class PairingTests(unittest.TestCase):
             with self.assertRaises(ft.pilot.b.SafeError):c.scanned_key(bad,FINGERPRINT)
     def test_command_embeds_only_public_profile_and_pinned_bootstrap(self):
         cmd=c.router_command({**PROFILE,'telegram_token':'SECRET','private_key':'SECRET'})
-        self.assertTrue(cmd.startswith('clear; '));self.assertIn(c.BOOTSTRAP_REF,cmd);self.assertIn(c.BOOTSTRAP_SHA,cmd)
-        token=cmd.split('xtls-profile-v1:')[1].split()[0]
+        self.assertTrue(cmd.startswith('clear\n'));self.assertIn(c.BOOTSTRAP_REF,cmd);self.assertIn(c.BOOTSTRAP_SHA,cmd)
+        import shlex
+        chunks=[shlex.split(line.split('profile="$profile"',1)[1])[0] for line in cmd.splitlines() if 'profile="$profile"' in line]
+        token=''.join(chunks).removeprefix('xtls-profile-v1:')
         self.assertEqual(json.loads(base64.b64decode(token)),PROFILE)
+        self.assertLess(max(map(len,cmd.splitlines())),300)
         self.assertNotIn('SECRET',cmd);self.assertIn('mktemp -d',cmd)
         subprocess.run(['sh','-n','-c',cmd],check=True)
     def test_primary_only_pin_never_writes_a_fake_rescue_mapping(self):
