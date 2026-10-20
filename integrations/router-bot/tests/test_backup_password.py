@@ -90,7 +90,12 @@ class BackupPasswordTests(unittest.TestCase):
         self.key.unlink(); previous.unlink()
         output = self.stage/'typed-restore'
         argv = ['backup.py', 'restore', str(archive), '--ask-passphrase', '--output', str(output)]
-        with patch.object(b.sys, 'argv', argv), patch.object(b.os, 'geteuid', return_value=0), patch.object(b.sys.stdin, 'isatty', return_value=True), patch.object(b.getpass, 'getpass', return_value=PASSWORD):
+        real_temporary = b.tempfile.TemporaryDirectory
+        def temporary(*args, **kwargs):
+            if Path(kwargs.get('dir', '/tmp')) == Path('/run'):
+                kwargs['dir'] = self.stage
+            return real_temporary(*args, **kwargs)
+        with patch.object(b.sys, 'argv', argv), patch.object(b.os, 'geteuid', return_value=0), patch.object(b.sys.stdin, 'isatty', return_value=True), patch.object(b.getpass, 'getpass', return_value=PASSWORD), patch.object(b.tempfile, 'TemporaryDirectory', side_effect=temporary):
             b.main()
         self.assertTrue((output/b.STATE/'bot.sqlite3').is_file())
         self.assertFalse((output/b.CONF/'backup.key').exists())
