@@ -40,5 +40,15 @@ class Installer(unittest.TestCase):
         self.key.write_text('ssh-rsa not-the-expected-key\n');self.run_install(False)
         self.assertEqual(self.auth.read_text(),self.original)
         self.auth.unlink();self.run_install(False);self.assertFalse((self.r/'deployed').exists())
+    def test_first_key_and_empty_file_supported(self):
+        self.auth.unlink();self.run_install()
+        self.assertIn(KEY,self.auth.read_text())
+        self.assertEqual(self.auth.stat().st_mode&0o777,0o600)
+        self.assertTrue(any((p/'authorized_keys.absent').exists() for p in self.r.glob('backup.*')))
+        self.auth.write_text('');self.run_install();self.assertIn(KEY,self.auth.read_text())
+    def test_directory_or_dangling_symlink_is_not_replaced(self):
+        self.auth.unlink();self.auth.mkdir();self.run_install(False);self.assertTrue(self.auth.is_dir())
+        self.auth.rmdir();self.auth.symlink_to(self.r/'missing');self.run_install(False)
+        self.assertTrue(self.auth.is_symlink());self.assertFalse((self.r/'missing').exists())
 
 if __name__=='__main__':unittest.main()

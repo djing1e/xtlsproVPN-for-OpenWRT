@@ -10,19 +10,27 @@ for file in "$base/ssh.uc" "$base/ssh-entry" "$1"; do
 done
 command -v ucode >/dev/null || fail 'ucode required'
 [ -x /usr/bin/xray-lab-control ] || fail 'xtlsproVPN controller required'
-[ -s /etc/dropbear/authorized_keys ] || fail 'Existing OpenWrt Dropbear authorized_keys required; inspect SSH setup first'
+auth=/etc/dropbear/authorized_keys
+[ -d "$(dirname "$auth")" ] || fail 'OpenWrt Dropbear directory required'
+if [ -e "$auth" ] || [ -L "$auth" ]; then
+    [ -f "$auth" ] || fail 'authorized_keys must be a regular file or valid file symlink'
+fi
 [ ! -L /etc/xtlspro-bot ] || fail 'Refusing symlink directory'
 key=$(awk 'NF { print $1 " " $2 }' < "$1")
 [ "$(printf '%s\n' "$key" | wc -l)" -eq 1 ] || fail 'Expected one key, not multiple lines'
 printf '%s\n' "$key" | grep -Eq '^ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI[A-Za-z0-9+/]{43}$' || fail 'Expected exactly one Ed25519 public key'
 material=${key#ssh-ed25519 }
 entry="command=\"/etc/xtlspro-bot/ssh-entry\",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty $key xtls-router-bot"
-if grep -Fq "$material" /etc/dropbear/authorized_keys; then
-    grep -Fxq "$entry" /etc/dropbear/authorized_keys || fail 'This key already exists with different options; inspect it manually'
+if [ -f "$auth" ] && grep -Fq "$material" "$auth"; then
+    grep -Fxq "$entry" "$auth" || fail 'This key already exists with different options; inspect it manually'
 fi
 sh -n "$base/ssh-entry"
 backup=$(mktemp -d /root/xtls-before-bot-bridge.XXXXXX)
-cp -p /etc/dropbear/authorized_keys "$backup/authorized_keys"
+if [ -f "$auth" ]; then
+    cp -p "$auth" "$backup/authorized_keys"
+else
+    : > "$backup/authorized_keys.absent"
+fi
 if [ -d /etc/xtlspro-bot ]; then cp -R /etc/xtlspro-bot "$backup/bridge"; fi
 mkdir -p /etc/xtlspro-bot
 chmod 700 /etc/xtlspro-bot
@@ -33,9 +41,9 @@ chmod 600 /etc/xtlspro-bot/ssh.uc.new
 chmod 700 /etc/xtlspro-bot/ssh-entry.new
 mv /etc/xtlspro-bot/ssh.uc.new /etc/xtlspro-bot/ssh.uc
 mv /etc/xtlspro-bot/ssh-entry.new /etc/xtlspro-bot/ssh-entry
-if ! grep -Fxq "$entry" /etc/dropbear/authorized_keys; then
-    printf '\n%s\n' "$entry" >> /etc/dropbear/authorized_keys
+if ! grep -Fxq "$entry" "$auth" 2>/dev/null; then
+    printf '\n%s\n' "$entry" >> "$auth"
 fi
-chmod 600 /etc/dropbear/authorized_keys
+chmod 600 "$auth"
 echo "Bridge installed. Backup: $backup"
 echo 'No service restart required. Test both permitted and rejected commands.'

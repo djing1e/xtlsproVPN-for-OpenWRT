@@ -8,6 +8,11 @@ no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty. Keep current
 administrator keys and Dropbear configuration unchanged. Pin the verified
 router host key on the bot server.
 
+Password-only test routers without authorized_keys are supported: the installer
+creates the file with mode 0600 and records its previous absence in the backup.
+Existing keys and valid symlinks are preserved; directories/dangling symlinks
+are rejected. Password authentication is not changed by the installer.
+
 Files live in /etc/xtlspro-bot (root-owned, not writable by the bot): ssh-entry
 and ssh.uc. The forced command is /etc/xtlspro-bot/ssh-entry. A later package or
 sysupgrade integration will be needed before claiming firmware-upgrade persistence.
