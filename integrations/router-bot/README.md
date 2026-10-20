@@ -288,3 +288,26 @@ A fresh `backup.py restore --apply` installs files and units but leaves polling,
 uploads and operator jobs disabled. After a deliberate production cutover, enable
 the bot, operator path and backup timer explicitly; a restored test copy must not
 start a second Telegram poller or scheduled uploader.
+
+### Recovery using a memorable passphrase
+
+`backup.py password` prompts twice using the terminal's hidden input (20–1024
+characters). The phrase never appears in command-line arguments, logs or Telegram.
+The root-only `backup.key` stores it for unattended daily encryption; it remains
+excluded from archives. The phrase should be independently stored in a password
+manager or another safe place outside the VPS.
+
+Before changing the active secret, the helper creates, decrypts and verifies an
+archive with the proposed phrase. It serializes creation and delivery, preserves
+the previous secret as `backup.key.previous-*` with mode 0600, atomically updates
+the active secret and queues the already verified archive for delivery. A failed
+verification leaves the active key unchanged. Receipt failure rolls back the key.
+Old archives, including earlier Telegram uploads, still need their previous key;
+copy that saved key outside the VPS if retaining those archives.
+
+Recovery no longer requires the original key file for archives created with your
+phrase: `backup.py restore ARCHIVE --ask-passphrase --output NEW_DIRECTORY` asks
+for it with hidden input. Add `--apply` only on a new VPS to install the recovered
+files; the supplied phrase is saved as its new closed recovery key. Wrong phrases
+do not publish a restore directory. Daily delivery recognizes a secret change
+and sends the new archive even if today's earlier archive was already delivered.

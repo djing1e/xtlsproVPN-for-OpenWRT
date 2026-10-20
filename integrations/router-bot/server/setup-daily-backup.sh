@@ -16,7 +16,7 @@ for file in backup.py install-daily-backup.py; do
 done
 cd "$work"
 sha256sum -c - <<'SUMS'
-78773957a9148a050ee60020eb0952dbb9aad5e23962daf7d605fd1d0b0dc96f  backup.py
+5cd39e334a41dc609c4a4359926a408641e4d33fe4d5e27dd582c7304aebc90a  backup.py
 8f2aebd3337ae614816c9f3b256c605730350ced1a9413eaadf056aefda97d1b  install-daily-backup.py
 SUMS
 python3 ./install-daily-backup.py
