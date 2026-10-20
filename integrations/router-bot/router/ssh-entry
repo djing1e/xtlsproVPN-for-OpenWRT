@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+umask 077
+exec /usr/bin/ucode /etc/xtlspro-bot/ssh.uc

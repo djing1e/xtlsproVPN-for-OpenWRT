@@ -1,0 +1,79 @@
+import json, os, shutil, subprocess, tempfile, unittest
+from pathlib import Path
+
+BASE=Path(__file__).resolve().parents[1]
+JOB='11111111-2222-4333-8444-555555555555'
+
+@unittest.skipUnless(shutil.which('ucode'),'host ucode required')
+class Bridge(unittest.TestCase):
+    def setUp(self):
+        self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
+        self.r=Path(self.tmp.name);self.log=self.r/'calls'
+        self.env=dict(os.environ,BRIDGE_CALLS=str(self.log),BRIDGE_FIXTURE=str(self.r/'fixture.json'))
+        self.fixture={'version':'1.3.0-r4','enabled':True,'mode':'auto','core':{'running':True},
+            'health':{'proxy_ok':True,'checked':100},'job':{'state':'idle'},'operation_busy':False,
+            'subscription':{'url':'SECRET-SUBSCRIPTION'},'nodes':[
+                {'id':'cfg123456','name':'SECRET-ENDPOINT','selected':True,'alive':True,'rtt_ms':123},
+                {'id':'cfgabcdef','name':'SECRET-ENDPOINT','selected':False,'alive':None}],
+            'uci':{'cfg123456':{'alias':'Finland','password':'SECRET-CREDENTIAL'},'cfgabcdef':{}}}
+        mods=self.r/'modules';mods.mkdir()
+        (mods/'uci.uc').write_text('''import * as fs from 'fs';
+export function cursor(){return {load:function(){return true;},get_all:function(){return json(fs.readfile(getenv('BRIDGE_FIXTURE'))).uci;}};};
+''')
+        ctl=self.r/'controller'
+        ctl.write_text('''#!/usr/bin/env python3
+import os,sys,json
+from pathlib import Path
+a=sys.argv[1:];f=json.loads(Path(os.environ['BRIDGE_FIXTURE']).read_text())
+with open(os.environ['BRIDGE_CALLS'],'a') as p:p.write(json.dumps(a)+'\\n')
+if a==['status']:print(json.dumps(f))
+elif a==['job']:print(json.dumps(f.get('last_job',{'id':'11111111-2222-4333-8444-555555555555','state':'done','action':'select'})))
+elif a[:2]==['launch','select']:print(json.dumps(f.get('launch',{'id':'11111111-2222-4333-8444-555555555555','state':'pending','action':'select'})))
+else:sys.exit(1)
+''');ctl.chmod(0o700)
+        self.src=self.r/'ssh.uc';self.src.write_text((BASE/'router/ssh.uc').read_text().replace('/usr/bin/xray-lab-control',str(ctl)))
+        self.mods=mods
+    def call(self,cmd,ok=True):
+        (self.r/'fixture.json').write_text(json.dumps(self.fixture))
+        r=subprocess.run(['ucode','-L',str(self.mods),str(self.src)],env=dict(self.env,SSH_ORIGINAL_COMMAND=cmd),capture_output=True,text=True,timeout=10)
+        self.assertEqual(r.returncode==0,ok,r.stdout+r.stderr)
+        self.assertNotIn('SECRET-',r.stdout+r.stderr)
+        d=json.loads(r.stdout);self.assertEqual(d['schema'],1);self.assertEqual(d['ok'],ok)
+        return d
+    def test_status_only_exports_whitelist(self):
+        d=self.call('xtlsbot-v1 status')['data']
+        self.assertTrue(d['running']);self.assertEqual(d['selected'],['cfg123456'])
+        self.assertEqual(set(d),{'version','enabled','running','mode','selected','proxy_ok','health_checked','operation_busy','job'})
+    def test_locations_never_fall_back_to_endpoint(self):
+        nodes=self.call('xtlsbot-v1 locations')['data']['nodes']
+        self.assertEqual([n['name'] for n in nodes],['Finland','Location 2'])
+        self.assertEqual(set(nodes[0]),{'id','name','selected','alive','rtt_ms'})
+    def test_unknown_commands_never_reach_controller(self):
+        for cmd in ['', 'sh','id','sftp','xtlsbot-v1 status;id','xtlsbot-v1 status\nid',
+                    'xtlsbot-v1 status\n','xtlsbot-v1 status ','xtlsbot-v1 select cfg123456 extra',
+                    'xtlsbot-v1 select $(id)','xtlsbot-v1 select cfg12345/', 'xtlsbot-v1 auto\r', 'x'*121]:
+            with self.subTest(cmd=cmd):self.assertEqual(self.call(cmd,False)['error']['code'],'unsupported_command')
+        self.assertFalse(self.log.exists())
+    def test_select_is_async_and_uses_existing_launcher(self):
+        d=self.call('xtlsbot-v1 select cfgabcdef')['data']
+        self.assertTrue(d['accepted']);self.assertEqual(d['job']['state'],'pending')
+        self.assertEqual(json.loads(self.log.read_text().splitlines()[-1]),['launch','select','cfgabcdef'])
+    def test_auto_uses_existing_launcher(self):
+        self.call('xtlsbot-v1 auto')
+        self.assertEqual(json.loads(self.log.read_text().splitlines()[-1]),['launch','select','auto'])
+    def test_unknown_location_and_offline_refused(self):
+        self.assertEqual(self.call('xtlsbot-v1 select cfg000000',False)['error']['code'],'unknown_location')
+        self.fixture['core']['running']=False
+        self.assertEqual(self.call('xtlsbot-v1 auto',False)['error']['code'],'proxy_not_running')
+        self.assertFalse(any(json.loads(x)[0]=='launch' for x in self.log.read_text().splitlines()))
+    def test_busy_and_launcher_rejection(self):
+        self.fixture['operation_busy']=True
+        self.assertEqual(self.call('xtlsbot-v1 auto',False)['error']['code'],'busy')
+        self.fixture['operation_busy']=False;self.fixture['launch']={'error':'SECRET-INTERNAL-DETAILS'}
+        self.assertEqual(self.call('xtlsbot-v1 auto',False)['error']['code'],'operation_rejected')
+    def test_job_requires_matching_receipt(self):
+        self.assertEqual(self.call('xtlsbot-v1 job '+JOB)['data']['job']['state'],'done')
+        self.fixture['last_job']={'id':'00000000-2222-4333-8444-555555555555','state':'done','message':'SECRET-LOG'}
+        self.assertEqual(self.call('xtlsbot-v1 job '+JOB,False)['error']['code'],'job_replaced')
+
+if __name__=='__main__':unittest.main()
