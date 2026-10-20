@@ -106,6 +106,29 @@ class BackupTests(unittest.TestCase):
         with self.assertRaises(backup.BackupError):
             backup.apply_restore(recovered, backup.key_path(self.root), new_vps, activate=False)
 
+    def test_restore_under_private_umask_leaves_application_traversable(self):
+        recovered = self.stage / 'plain-source'
+        for name in backup.FILES:
+            source = self.root / name
+            dest = recovered / name
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(source.read_bytes())
+        destination = self.stage / 'private-umask-vps'
+        destination.mkdir()
+        account = types.SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid())
+        previous = os.umask(0o077)
+        try:
+            with patch.object(backup.pwd, 'getpwnam', return_value=account):
+                backup.apply_restore(recovered, backup.key_path(self.root), destination, activate=False)
+        finally:
+            os.umask(previous)
+        for name in ('opt', 'opt/xtls-router-bot', 'etc', 'etc/xtls-router-bot', 'var', 'var/lib'):
+            self.assertEqual((destination / name).stat().st_mode & 0o777, 0o755, name)
+        self.assertEqual((destination / backup.STATE).stat().st_mode & 0o777, 0o750)
+        self.assertEqual((destination / backup.STATE / '.ssh').stat().st_mode & 0o777, 0o700)
+        for name in (backup.CONF+'telegram_token', backup.CONF+'backup.key', backup.STATE+'.ssh/id_ed25519'):
+            self.assertEqual((destination / name).stat().st_mode & 0o777, 0o600, name)
+
     def test_live_database_copy_drops_to_database_owner(self):
         actual = self.root / backup.STATE / 'bot.sqlite3'
         source = MagicMock()
