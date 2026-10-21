@@ -1,6 +1,7 @@
 #!/usr/bin/ucode
 import * as fs from 'fs';
 import { version_ok, release_assets, release_candidate, release_plan } from './package_release.mjs';
+import { installed_version as installed } from './package_release.mjs';
 const RUN='/var/run/xtlspro-package';
 const STATE='/etc/xtlspro-update';
 function load(p) {try {return json(fs.readfile(p) || '');} catch(e) {return null;}}
@@ -11,17 +12,6 @@ function save(p,v) {
     if (!n || !fs.rename(p+'.new',p)) die('Не удалось сохранить состояние обновления');
 }
 function quote(s) {return "'"+replace(''+s,/'/g,"'\\''")+"'";}
-function installed() {
-    // --exists restricts the query to installed packages and prints one line.
-    // Plain `info -v NAME` prints descriptive headers, not a version-only list.
-    let p=fs.popen('apk info -v -e xtlsprovpn 2>/dev/null','r');
-    let body=p?.read('all') || '',rc=p?.close();
-    if (rc!=0) return null;
-    for (let line in split(body,'\n')) {
-        if (index(line,'xtlsprovpn-')==0 && version_ok(substr(line,11))) return substr(line,11);
-    }
-    return null;
-}
 function boot() {return trim(fs.readfile('/proc/sys/kernel/random/boot_id') || '');}
 function job() {
     let j=load(RUN+'/job.json') || load(STATE+'/last.json') || {state:'idle'};
