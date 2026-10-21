@@ -9,12 +9,12 @@ import tarfile
 
 ROOT = Path(__file__).resolve().parents[1]
 VERSION = '1.4.1'
-DOCS = ('README.md', 'ONBOARDING.md', 'EASY-ENROLLMENT.md', 'ADMIN-MENU.md', 'OPERATIONS.md', 'RECOVERY.md', 'DEVICE-UI-FIX.md')
+DOCS = ('README.md', 'ONBOARDING.md', 'EASY-ENROLLMENT.md', 'ADMIN-MENU.md', 'OPERATIONS.md', 'RECOVERY.md', 'DEVICE-UI-FIX.md', 'PRESENCE-RICH.md')
 SERVER = ('backup.py', 'bot.py', 'connect.py', 'enroll_rescue.py', 'fleet.py', 'install-connect.py',
           'install-daily-backup.py', 'install-operator.py', 'install.py', 'operator_client.py',
           'operator_worker.py', 'upgrade.py', 'upgrade-release.sh', 'xtls-router-add',
           'xtls-router-bot-operator.path', 'xtls-router-bot-operator.service', 'xtls-router-bot.service',
-          'setup-connect.sh', 'setup-operator.sh', 'setup-catalog.sh', 'setup-daily-backup.sh', 'setup-backup-password.sh', 'setup-device-ui.sh')
+          'setup-connect.sh', 'setup-operator.sh', 'setup-catalog.sh', 'setup-daily-backup.sh', 'setup-backup-password.sh', 'setup-device-ui.sh', 'setup-rich-presence.sh')
 
 
 def package(output, root=ROOT):
