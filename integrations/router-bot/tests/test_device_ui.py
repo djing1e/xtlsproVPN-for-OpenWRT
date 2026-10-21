@@ -25,7 +25,7 @@ class DeviceUI(unittest.TestCase):
             self.assertTrue(restarted.router_label('lab').startswith('Клиент 12426 · Москва'))
             restarted.menu(123, query='Москва', page=0)
             self.assertIn('Найдено: 1', self.messages()[-1])
-            self.assertEqual(self.keyboard()[0][0]['text'], 'Клиент 12426 · Москва')
+            self.assertEqual(self.keyboard()[0][0]['text'], '⚪ Клиент 12426 · Москва')
             self.assertTrue(self.store.grant_epoch(123, 'lab'))
             self.assertEqual(self.bridge.calls, [])
         finally:
@@ -57,8 +57,9 @@ class DeviceUI(unittest.TestCase):
                 self.store.rename_router(UID, 'lab', name)
 
     def test_support_url_in_catalog_card_help_and_without_access(self):
-        for action in (lambda: self.bot.menu(UID), lambda: self.bot.status(UID, 'lab'),
-                       lambda: self.bot.help(UID), lambda: self.text('/start', uid=123)):
+        self.store.change_access(UID, 123, 'lab', True)
+        for action in (lambda: self.bot.menu(123), lambda: self.bot.status(123, 'lab'),
+                       lambda: self.bot.help(123), lambda: self.text('/start', uid=456)):
             action()
             links = [v.get('url') for row in self.keyboard() for v in row]
             self.assertIn('https://t.me/xtlsprosupportbot', links)
