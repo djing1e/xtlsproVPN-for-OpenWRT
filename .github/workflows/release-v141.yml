@@ -1,13 +1,5 @@
 name: Verify or publish v1.4.1 cumulative release
 on:
-  push:
-    branches: ['main', 'release/v1.4.1']
-    paths:
-      - '.github/workflows/release-v141.yml'
-      - 'scripts/publish-v141.sh'
-      - 'install.sh'
-      - 'update.sh'
-      - 'tests/test_native_catalogue.py'
   workflow_dispatch:
     inputs:
       publish:
