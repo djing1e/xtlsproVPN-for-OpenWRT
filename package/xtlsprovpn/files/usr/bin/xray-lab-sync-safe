@@ -128,7 +128,8 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 echo 'Downloading subscription into a private staging directory; live services retained...'
-FX_STATE_DIR="$WORK/staged" FX_RUN_DIR="$WORK/fetch" FX_NO_RELOAD=1 FX_FALLBACK_SOCKS=127.0.0.1:1080 forkop-xray update
+fallback=$(ucode "$LIB/lab/subscription_transport.uc" 2>/dev/null || :)
+FX_STATE_DIR="$WORK/staged" FX_RUN_DIR="$WORK/fetch" FX_NO_RELOAD=1 FX_FALLBACK_SOCKS="$fallback" forkop-xray update
 : > "$WORK/config/xray_core"
 FX_SUBSCRIPTION_CACHE="$WORK/staged/subscription.json" ucode "$LIB/lab_prepare.uc" "$WORK/config"
 XRAY_UCI_CONFIG_DIR="$WORK/config" ucode "$LIB/gen_config.uc" > "$WORK/config.json"
