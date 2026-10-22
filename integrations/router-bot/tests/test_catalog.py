@@ -42,7 +42,7 @@ class CatalogTests(unittest.TestCase):
         self.click('🔎 Поиск')
         self.text('242C7C6D')
         self.assertIn('Найдено: 1', self.messages()[-1])
-        self.assertEqual(self.keyboard()[0][0]['text'], 'LAB')
+        self.assertEqual(self.keyboard()[0][0]['text'], '⚪ LAB')
         self.bot.menu(UID, query='№1481', page=0)
         self.assertIn('Найдено: 1', self.messages()[-1])
         self.text('/start')
@@ -65,8 +65,8 @@ class CatalogTests(unittest.TestCase):
         self.store.cache_hwid('other', 'abcd-1234-5678-9012')
         self.bot.menu(UID)
         labels = [v['text'] for row in self.keyboard() for v in row]
-        self.assertIn('LAB · 242c-7c6d-ea5f-33d0', labels)
-        self.assertIn('LAB · abcd-1234-5678-9012', labels)
+        self.assertIn('⚪ LAB · 242c-7c6d-ea5f-33d0', labels)
+        self.assertIn('⚪ LAB · abcd-1234-5678-9012', labels)
         self.bot.status(UID, 'lab')
         self.assertTrue(self.messages()[-1].startswith('LAB · HWID 242c-7c6d-ea5f-33d0'))
 

@@ -32,7 +32,7 @@ class ButtonFlowTests(unittest.TestCase):
 
     def test_button_enrollment_end_to_end_requires_confirmation(self):
         self.bot.handle(self.message('/start'))
-        self.click('LAB')
+        self.click('⚪ LAB')
         self.click('👥 Доступ клиентов')
         self.click('➕ Добавить клиента')
         self.assertEqual(self.store.dialog(UID), 'lab')
@@ -89,7 +89,7 @@ class ButtonFlowTests(unittest.TestCase):
         self.assertIn(str(UID), self.messages()[-1])
         self.click('ℹ️ Помощь')
         self.click('🏠 Мои роутеры')
-        self.click('LAB')
+        self.click('⚪ LAB')
         self.click('🏠 Мои роутеры')
         self.assertIn('Выберите роутер', self.messages()[-1])
 

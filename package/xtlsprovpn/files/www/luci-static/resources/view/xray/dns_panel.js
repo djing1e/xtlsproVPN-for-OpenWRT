@@ -14,8 +14,13 @@ return baseclass.extend({
         const fields={}, rows={}, providers=initial.providers || {}, state=E('p',{'role':'status','aria-live':'polite'});
         const box=E('div',{'class':'cbi-map'}), buttons=[];
         let busy=false, submitting=false, loadedJob=initial.job?.id;
+        const sourceStatus=E('span',{});
+        function showSources(s) {
+            sourceStatus.textContent=s.source_error || ((s.options?.sources || []).length?'Выбрано вручную: ':'Определено автоматически: ')+(s.sources || []).join(', ');
+        }
+        showSources(initial);
         const sourceWidget=new ui.Dropdown([],Object.fromEntries(initial.devices.map(n=>[n,n])),{
-            id:'dns-sources',multiple:true,optional:true,display_items:3,select_placeholder:'LAN текущего профиля'
+            id:'dns-sources',multiple:true,optional:true,display_items:3,select_placeholder:'Автоматически (LAN OpenWrt)'
         });
         const bootstrapWidget=new ui.Dropdown([],{
             '1.1.1.1':'1.1.1.1 (Cloudflare)','1.0.0.1':'1.0.0.1 (Cloudflare)',
@@ -54,7 +59,7 @@ return baseclass.extend({
         const network=E('div',{'class':'cbi-section'},[
             E('h3',{},'Сеть'),
             row('sources','Сетевые интерфейсы источника',sourceWidget.render(),
-                'Входящие устройства клиентов, например br-lan. Без выбора используется LAN текущего профиля.'),
+                E('span',{},['Входящие устройства клиентов, например br-lan. Без выбора определяется текущий LAN OpenWrt. ',sourceStatus])),
             flag('output_enabled','Выбрать выходной сетевой интерфейс','По умолчанию выход определяется таблицей маршрутизации автоматически.'),
             select('output_device','Выходной сетевой интерфейс', [['','Выберите устройство'],...initial.devices.map(n=>[n,n])]),
             flag('disable_quic','Отключить QUIC','Блокирует клиентский UDP/443 для совместимости и устранения проблем с видео. Приложения с поддержкой TCP смогут переключиться на него.')
@@ -99,6 +104,7 @@ return baseclass.extend({
             return o;
         }
         function draw(s) {
+            showSources(s);
             const j=s.job || {};
             busy=['pending','running'].includes(j.state);
             state.textContent=j.message || 'Настройки ещё не проверялись. Проверка не меняет рабочий тоннель.';

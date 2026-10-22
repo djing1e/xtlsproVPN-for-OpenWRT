@@ -19,7 +19,7 @@ data = a.apk.read_bytes()
 if not 0 < len(data) <= 8388608:
     p.error('APK must be between 1 byte and 8 MiB')
 manifest = {'schema':1,'tag':'v'+m[1],'version':m[1]+'-r'+m[2],
-            'openwrt':['25.12.5'],'architectures':['aarch64'],
+            'openwrt':['25.12.5','25.12.6'],'architectures':['aarch64'],
             'installed_size_kb':a.installed_size_kb,
             'apk':{'name':a.apk.name,'size':len(data),'sha256':hashlib.sha256(data).hexdigest()}}
 a.output.write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n')

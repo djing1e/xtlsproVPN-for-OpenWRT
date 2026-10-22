@@ -17,4 +17,4 @@ systemctl restart xtls-router-bot-backup.timer
 python3 /opt/xtls-router-bot/backup.py create
 systemctl is-active xtls-router-bot.service
 systemctl list-timers --all --no-pager xtls-router-bot-backup.timer
-echo 'Серверный комплект 1.4.1 установлен. Парольная фраза и клиентские доступы сохранены.'
+echo 'Серверный комплект установлен. Парольная фраза и клиентские доступы сохранены.'

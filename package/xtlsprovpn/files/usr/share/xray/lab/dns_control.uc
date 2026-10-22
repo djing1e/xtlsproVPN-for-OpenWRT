@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import { cursor } from 'uci';
 import { load_rules } from './routing_options.mjs';
 import { defaults, providers, normalize, load_options } from './dns_options.mjs';
+import { load_config } from '../common/config.mjs';
 import { dns_probe } from './dns_probe.mjs';
 const root='/var/run/xray-lab-control';
 function load(path,fallback) {try{return json(fs.readfile(path) || '') || fallback;}catch(e){return fallback;}}
@@ -23,7 +24,10 @@ if (op=='status') {
     for (let path in fs.glob('/sys/class/net/*') || []) {
         let name=substr(path,15);if (name!='lo') push(devices,name);
     }
-    printf('%J\n',{options,providers,devices:sort(devices),job,rules:load_rules()});
+    let sources=[],source_error;
+    try { sources=load_config().general?.tproxy_ifaces_v4 || []; }
+    catch (e) { source_error=''+e; }
+    printf('%J\n',{options,providers,devices:sort(devices),sources,source_error,job,rules:load_rules()});
 } else if (op=='stage') {
     let input=load(ARGV[1],null),options=normalize(input,true),dir=ARGV[2];
     if (!fs.writefile(dir+'/xray_lab_dns',"config settings 'main'\n"))die('Cannot create DNS settings');
