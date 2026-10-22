@@ -49,6 +49,7 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_wrapper_guard_adopt.py'
           python3 -m unittest discover -s tests -p 'test_rescue.py'
           node tests/test_rescue_ui.js
+          python3 -m unittest discover -s tests -p 'test_install_links.py'
           python3 -m unittest discover -s tests -p 'test_release_v142.py'
           python3 -m unittest discover -s tests -p 'test_source_interfaces.py'
           python3 -m unittest discover -s tests -p 'test_dns_probe.py'

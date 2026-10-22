@@ -2,16 +2,19 @@
 # Published stable release; bump version, URL and hash together.
 set -eu
 MODE=update
-VERSION='1.4.1-r1'
-SHA256='8f3e211fd58160938786c981469d66ce5bed8b1e3195ab25d00f02df56c00c55'
-URL="https://github.com/djing1e/xtlsproVPN-for-OpenWRT/releases/download/v1.4.1/xtlsprovpn-$VERSION.apk"
+VERSION='1.4.2-r1'
+SHA256='e7f217fbf0ad34b5535b718febed110d80276582dd2648cf47dd0dfe9561a9a8'
+URL="https://github.com/djing1e/xtlsproVPN-for-OpenWRT/releases/download/v1.4.2/xtlsprovpn-$VERSION.apk"
 
 fail() { echo "xtlsproVPN: $*" >&2; exit 1; }
 [ "$#" -eq 0 ] || fail 'Параметры не поддерживаются.'
 [ "$(id -u)" = 0 ] || fail 'Запустите от root.'
 [ -f /etc/openwrt_release ] || fail 'Нужен OpenWrt.'
 . /etc/openwrt_release
-[ "${DISTRIB_RELEASE:-}" = '25.12.5' ] || fail 'Этот выпуск проверен для OpenWrt 25.12.5.'
+case "${DISTRIB_RELEASE:-}" in
+    25.12.5|25.12.6) ;;
+    *) fail 'Этот выпуск предназначен для OpenWrt 25.12.5/25.12.6.' ;;
+esac
 [ "$(uname -m)" = aarch64 ] || fail 'Этот выпуск предназначен для aarch64.'
 command -v apk >/dev/null 2>&1 || fail 'Не найден пакетный менеджер apk.'
 
@@ -32,16 +35,30 @@ if [ "$MODE" = update ]; then
 fi
 
 # No removal, purge, config reset or direct service restart.
-apk update
-apk add curl ca-bundle coreutils-sha256sum
 umask 077
 workdir=$(mktemp -d /tmp/xtls-install.XXXXXX)
 trap 'rm -rf "$workdir"' EXIT
 trap 'exit 1' HUP INT TERM
+# OpenWrt apk delegates downloads to wget. Keep the IPv4 override local to
+# this installer; no system downloader or network configuration is replaced.
+fetch=$(command -v uclient-fetch || true)
+if [ -n "$fetch" ]; then
+    printf '#!/bin/sh\nexec "%s" -4 "$@"\n' "$fetch" > "$workdir/wget"
+    chmod 700 "$workdir/wget"
+fi
+apk_run() {
+    if [ -n "$fetch" ]; then
+        PATH="$workdir:$PATH" apk --preserve-env "$@"
+    else
+        apk "$@"
+    fi
+}
+apk_run update
+apk_run add curl ca-bundle coreutils-sha256sum
 package="$workdir/xtlsprovpn-$VERSION.apk"
-curl -fL --connect-timeout 10 --max-time 120 "$URL" -o "$package"
+curl -4 -fL --connect-timeout 10 --max-time 120 "$URL" -o "$package"
 printf '%s  %s\n' "$SHA256" "$package" | sha256sum -c -
-apk add --allow-untrusted "$package"
+apk_run add --allow-untrusted "$package"
 echo "xtlsproVPN $VERSION: установка пакета завершена."
 echo 'Откройте Services → xtlsproVPN в LuCI. Ядро Xray управляется отдельно.'
 

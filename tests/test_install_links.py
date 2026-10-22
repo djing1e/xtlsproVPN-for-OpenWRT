@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class InstallLinks(unittest.TestCase):
     def run_script(self, mode, installed="absent", download="ok", checksum="ok",
-                   platform="25.12.5", arch="aarch64"):
+                   platform="25.12.5", arch="aarch64", ipv4_fetch=False):
         with tempfile.TemporaryDirectory() as tmp:
             d = Path(tmp)
             release = d / "openwrt_release"
@@ -25,11 +25,13 @@ case "${0##*/}" in
 id) echo 0 ;;
 uname) echo "$ARCH" ;;
 apk)
+  [ "$1" != --preserve-env ] || shift
+  if [ "$1" = update ] && [ "$IPV4_FETCH" = 1 ]; then wget https://packages.test/ -O /dev/null || exit 1; fi
   if [ "$1" = info ]; then
     case "$3:$INSTALLED" in
       xtlsprovpn:absent) exit 1 ;;
       xtlsprovpn:*) exit 0 ;;
-      'xtlsprovpn=1.4.1-r1:same'|'xtlsprovpn>1.4.1-r1:newer') exit 0 ;;
+      'xtlsprovpn=1.4.2-r1:same'|'xtlsprovpn>1.4.2-r1:newer') exit 0 ;;
       *) exit 1 ;;
     esac
   fi ;;
@@ -42,14 +44,14 @@ curl)
 sha256sum) cat >/dev/null; [ "$CHECKSUM" = ok ] ;;
 esac
 """
-            for name in ("apk", "curl", "sha256sum", "id", "uname"):
+            for name in ("apk", "curl", "sha256sum", "id", "uname") + (("uclient-fetch",) if ipv4_fetch else ()):
                 path = bindir / name
                 path.write_text(mock)
                 path.chmod(0o700)
             calls = d / "calls"
             env = dict(os.environ, PATH=str(bindir) + ":" + os.environ["PATH"],
                        CALLS=str(calls), INSTALLED=installed, DOWNLOAD=download,
-                       CHECKSUM=checksum, ARCH=arch)
+                       CHECKSUM=checksum, ARCH=arch, IPV4_FETCH='1' if ipv4_fetch else '0')
             r = subprocess.run(["sh", str(script)], env=env,
                                capture_output=True, text=True)
             log = calls.read_text() if calls.exists() else ""
@@ -63,6 +65,20 @@ esac
         r, log = self.run_script("install")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("apk add --allow-untrusted ", log)
+
+    def test_openwrt_25126_install_and_update(self):
+        for mode, installed in [('install', 'absent'), ('update', 'older')]:
+            r, log = self.run_script(mode, installed, platform='25.12.6')
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn('curl -4 -fL', log)
+            self.assertIn('apk add --allow-untrusted', log)
+
+    def test_apk_uses_scoped_ipv4_downloader(self):
+        r, log = self.run_script('update', 'older', platform='25.12.6', ipv4_fetch=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn('apk --preserve-env update', log)
+        self.assertIn('uclient-fetch -4 https://packages.test/', log)
+        self.assertIn('apk --preserve-env add --allow-untrusted', log)
 
     def test_upgrade_existing_package(self):
         r, log = self.run_script("update", "older")
