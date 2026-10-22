@@ -48,6 +48,7 @@ jobs:
       - name: Check installed package version and updater
         run: |
           python3 -m unittest discover -s tests -p 'test_subscription_transport.py'
+          python3 -m unittest discover -s tests -p 'test_subscription_tls_hotfix.py'
           python3 -m unittest discover -s tests -p 'test_sync_transaction.py'
           python3 -m unittest discover -s tests -p 'test_installed_version.py'
           python3 -m unittest discover -s tests -p 'test_package_update.py'
