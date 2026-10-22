@@ -229,7 +229,7 @@ export function health_check() {
     const g=config().general || {}, url=g.fx_probe_url || 'https://cp.cloudflare.com/generate_204';
     if (!match(url,/^https:\/\/[^[:space:]]+$/)) die('Invalid HTTPS probe URL');
     fs.mkdir(run_dir,0700);
-    const proxy=probe(1080,url), direct=proxy.alive?null:probe(null,url);
+    const proxy=probe(11499,url), direct=proxy.alive?null:probe(null,url);
     const result={checked:time(),proxy_ok:proxy.alive,delay:proxy.delay,http:proxy.http,
         direct_ok:direct?.alive===true,direct_error:direct?.error || null,proxy_pid:snapshot().core.pid};
     save(run_dir+'/health.json',result); return result;

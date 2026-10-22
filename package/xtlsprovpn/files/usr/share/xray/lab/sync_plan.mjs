@@ -54,14 +54,21 @@ export function sync_plan(candidate,live,metrics,now) {
         let m=metrics?.observatory?.[o.tag],stamp=int(m?.last_try_time || m?.lastTryTime || 0);
         return m?.alive===true && stamp>0 && now>=stamp && now-stamp<=180 ? int(m.delay):2147483647;
     }
-    const selected=balancer.strategy?.type=='leastPing'?sort([...pool],(a,b)=>latency(a)-latency(b))[0]:pool[0];
+    const automatic=balancer.strategy?.type=='leastPing';
+    const activation=automatic?sort([...pool],(a,b)=>latency(a)-latency(b)): [pool[0]];
     const changed=filter(nodes,o=>!same(o,filter(live?.outbounds || [],x=>x.tag==o.tag)[0]));
     let steps=[];
-    for(let node in [...changed,selected]) {
-        const final=length(steps)==length(changed),port=final?11980:12000;
-        const c=probe(candidate,node,port);
+    for(let node in changed) {
+        const c=probe(candidate,node,12000);
         if(!c)return null;
-        push(steps,{config:c,port,dns:final,node:node.tag});
+        push(steps,{config:c,port:12000,dns:false,node:node.tag});
+    }
+    // An unavailable newly added node must not veto every other usable path.
+    // In manual mode only the explicitly selected node may activate the update.
+    for(let node in activation) {
+        const c=probe(candidate,node,11980);
+        if(!c)return null;
+        push(steps,{config:c,port:11980,dns:true,alternative:automatic,node:node.tag});
     }
     return {mode:'sequential',minimum_kb:32768,gomemlimit:'24MiB',changed:length(changed),steps};
 };

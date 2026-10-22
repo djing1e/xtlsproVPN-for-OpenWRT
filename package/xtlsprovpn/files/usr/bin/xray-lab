@@ -87,15 +87,22 @@ start)
         /etc/init.d/xray_core stop 8>&- 9>&- || :
         echo 'Xray could not stay running; inspect logread -e xray'; exit 1
     fi
-    echo 'Checking actual HTTPS connectivity through the selected node...'
-    if ! curl --fail --silent --show-error --connect-timeout 10 --max-time 25 \
-        --noproxy '' --proxy socks5h://127.0.0.1:1080 https://api.ipify.org > "$CHECK/proxy-ip"; then
+    echo 'Checking actual HTTPS connectivity through the active proxy route...'
+    proxy_ok=0
+    for attempt in 1 2 3; do
+        code=$(curl --fail --silent --show-error --connect-timeout 5 --max-time 10 \
+            --noproxy '' --proxy socks5h://127.0.0.1:11499 \
+            --output /dev/null --write-out '%{http_code}' https://cp.cloudflare.com/generate_204) || code=000
+        if [ "$code" = 204 ];then proxy_ok=1;break;fi
+        sleep 1
+    done
+    if [ "$proxy_ok" != 1 ]; then
         /etc/init.d/xray_core stop 8>&- 9>&- || :
         echo 'Proxy request failed. LAN and system DNS were not enabled.'
         echo 'Inspect /var/log/xray-lab-error.log for the outbound failure.'
         exit 1
     fi
-    printf 'Selected-node exit IP: '; cat "$CHECK/proxy-ip"; printf '\n'
+    echo 'Active proxy route verified (HTTP 204).'
     echo 'Checking the native DNS resolver before replacing system DNS...'
     if ! nslookup -type=A -timeout=5 -retry=1 openwrt.org 127.0.0.1:5300 > "$CHECK/dns-check" 2>&1 ||
         ! grep -q '^Name:' "$CHECK/dns-check"; then

@@ -14,7 +14,7 @@ if(ARGV[6]) {
             step.config.log.error=ARGV[4];
             if(!fs.writefile(path,sprintf('%J',step.config)))die('Cannot stage sequential probe');
             if(!fs.chmod(path,0600))die('Cannot protect sequential probe');
-            push(lines,''+step.port+' '+path+' '+(step.dns?'1':'0'));
+            push(lines,''+step.port+' '+path+' '+(step.dns?(step.alternative?'2':'1'):'0'));
         }
         if(!fs.writefile(ARGV[3],join('\n',lines)+'\n') ||
             !fs.writefile(ARGV[6],sprintf('%J',{mode:plan.mode,minimum_kb:plan.minimum_kb,gomemlimit:plan.gomemlimit,changed:plan.changed})))
@@ -29,6 +29,10 @@ let socks=filter(c.inbounds || [],i=>i.tag=='socks_inbound')[0];
 let dns=filter(c.inbounds || [],i=>i.tag=='dns_server_inbound:5300')[0];
 if(!socks || !dns || !length(proxies))die('Missing local candidate listeners');
 socks.listen='127.0.0.1';socks.port=11980;
+if (length(filter(c.routing?.balancers || [],b=>b.tag=='fx_main'))) {
+    socks.tag='fx_sync_main';
+    splice(c.routing.rules,0,0,{type:'field',inboundTag:[socks.tag],balancerTag:'fx_main'});
+}
 dns.listen='127.0.0.1';dns.port=11981;
 c.inbounds=[socks,dns];delete c.api;delete c.metrics;
 c.routing.rules=filter(c.routing.rules || [],r=>r.outboundTag!='api' && r.outboundTag!='metrics');

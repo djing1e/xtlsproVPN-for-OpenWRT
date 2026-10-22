@@ -20,9 +20,9 @@ class SyncPlan(unittest.TestCase):
             r=subprocess.run(['ucode',str(p/'run.uc'),str(p/'in.json')],capture_output=True,text=True)
             self.assertEqual(r.returncode,0,r.stderr);return json.loads(r.stdout)
     def node(self,c):return [o for o in c['outbounds'] if o['tag'].startswith('fx_node:')]
-    def test_unchanged_transports_probe_only_selected_node_without_client_rules(self):
+    def test_auto_checks_preferred_path_before_alternatives_without_client_rules(self):
         p=self.plan();self.assertEqual(p['mode'],'sequential');self.assertEqual(p['changed'],0)
-        self.assertEqual(len(p['steps']),1);c=p['steps'][0]['config']
+        self.assertEqual([s['node'] for s in p['steps']],['fx_node:b','fx_node:a']);self.assertTrue(all(s['alternative'] for s in p['steps']));c=p['steps'][0]['config']
         self.assertEqual(self.node(c)[0]['tag'],'fx_node:b');self.assertEqual(len(self.node(c)),1)
         self.assertEqual(c['routing']['rules'][0]['outboundTag'],'fx_node:b')
         self.assertNotIn('ext:large.dat',json.dumps(c));self.assertEqual(c['dns'],self.candidate['dns'])
@@ -31,13 +31,13 @@ class SyncPlan(unittest.TestCase):
         self.assertEqual(p['minimum_kb'],32768);self.assertEqual(p['gomemlimit'],'24MiB')
     def test_changed_nodes_are_all_checked_before_selected_dns(self):
         self.candidate['outbounds'][0]['settings']['vnext'][0]['address']='changed.test'
-        p=self.plan();self.assertEqual(p['changed'],1);self.assertEqual(len(p['steps']),2)
-        self.assertEqual([s['port'] for s in p['steps']],[12000,11980])
+        p=self.plan();self.assertEqual(p['changed'],1);self.assertEqual(len(p['steps']),3)
+        self.assertEqual([s['port'] for s in p['steps']],[12000,11980,11980])
         self.assertFalse(p['steps'][0]['dns']);self.assertTrue(p['steps'][1]['dns'])
         self.assertEqual(p['steps'][0]['node'],'fx_node:a')
     def test_manual_selection_ignores_another_faster_node(self):
         self.candidate['routing']['balancers'][0].update(selector=['fx_node:a'],strategy={'type':'random'})
-        self.assertEqual(self.plan()['steps'][-1]['node'],'fx_node:a')
+        p=self.plan();self.assertEqual(p['steps'][-1]['node'],'fx_node:a');self.assertFalse(p['steps'][-1]['alternative']);self.assertEqual(len(p['steps']),1)
     def test_missing_live_configuration_tests_every_node(self):
         self.live={};self.assertEqual(self.plan()['changed'],2)
     def test_json_key_order_does_not_mark_unchanged_transport_changed(self):
@@ -48,7 +48,7 @@ class SyncPlan(unittest.TestCase):
         o['streamSettings']={'network':'xhttp','security':'reality','sockopt':{'mark':253,'interface':'wan'}}
         self.assertEqual(self.node(self.plan()['steps'][0]['config'])[0],o)
     def test_dns_uses_candidate_node_while_bootstrap_stays_direct(self):
-        c=self.plan()['steps'][-1]['config'];rules=c['routing']['rules']
+        c=self.plan()['steps'][0]['config'];rules=c['routing']['rules']
         self.assertEqual(next(r for r in rules if 'fx_dns_bootstrap' in r['inboundTag'])['outboundTag'],'direct')
         self.assertEqual(next(r for r in rules if 'fx_dns_main:0' in r['inboundTag'])['outboundTag'],'fx_node:b')
         self.assertFalse(any('balancerTag' in r for r in rules))
@@ -69,8 +69,8 @@ class SyncPlan(unittest.TestCase):
                               str(d/'ports'),str(d/'error.log'),str(d/'metrics'),str(d/'plan')],capture_output=True,text=True)
             self.assertEqual(r.returncode,0,r.stderr);p=json.loads((d/'plan').read_text())
             self.assertEqual(p['mode'],'sequential')
-            lines=(d/'ports').read_text().splitlines();self.assertEqual(len(lines),1)
-            port,path,dns=lines[0].split();self.assertEqual(port,'11980');self.assertEqual(dns,'1')
+            lines=(d/'ports').read_text().splitlines();self.assertEqual(len(lines),2)
+            port,path,dns=lines[0].split();self.assertEqual(port,'11980');self.assertEqual(dns,'2')
             self.assertEqual(Path(path).suffix,'.json', 'Xray detects the config format from its extension')
             c=json.loads(Path(path).read_text());self.assertEqual(len(self.node(c)),1)
             self.assertEqual(Path(path).stat().st_mode & 0o777,0o600)
