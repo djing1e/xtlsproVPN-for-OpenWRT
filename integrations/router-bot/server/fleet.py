@@ -271,7 +271,13 @@ def profile_command(config,host,port,output):
 
 def enroll(config,p,requested,name):
     original_config=CONFIG.read_text()
-    if json.loads(original_config)!=config:raise SafeError('Конфигурация изменилась. Повтори регистрацию.')
+    persisted=json.loads(original_config)
+    expected=copy.deepcopy(config)
+    # load_config adds this runtime default to older files. Compare the same
+    # representation without masking explicit values or real registry changes.
+    if 'rich_messages' not in persisted and expected.get('rich_messages') is True:
+        expected.pop('rich_messages')
+    if persisted!=expected:raise SafeError('Конфигурация изменилась. Повтори регистрацию.')
     rid,label=choose(config,p,requested,name)
     old=config['routers'].get(rid,{})
     existing=old.get('fleet')

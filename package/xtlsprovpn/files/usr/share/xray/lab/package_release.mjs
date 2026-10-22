@@ -1,3 +1,4 @@
+import * as fs from 'fs';
 // Only stable releases of this repository and an explicit platform manifest.
 const REPO='djing1e/xtlsproVPN-for-OpenWRT';
 export function version_ok(v) {
@@ -49,4 +50,15 @@ export function release_plan(r,m,platform,arch) {
     return {version:m.version,tag:r.tag_name,name,url,sha256:m.apk.sha256,size:m.apk.size,
         installed_size_kb:m.installed_size_kb,
         release_url:'https://github.com/'+REPO+'/releases/tag/'+r.tag_name};
+};
+
+export function installed_version() {
+    // Query the package database on every read; runtime state survives upgrades.
+    let p=fs.popen('apk info -v -e xtlsprovpn 2>/dev/null','r');
+    let body=p?.read('all') || '',rc=p?.close();
+    if (rc!=0) return null;
+    for (let line in split(body,'\n')) {
+        if (index(line,'xtlsprovpn-')==0 && version_ok(substr(line,11))) return substr(line,11);
+    }
+    return null;
 };

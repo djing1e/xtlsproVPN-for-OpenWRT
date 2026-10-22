@@ -11,7 +11,7 @@
     const lab_iface = general.lab_iface;
     if (!match(lab_iface || "", /^[A-Za-z0-9_.-]{1,15}$/)) die("Invalid lab LAN interface");
     const dns_options=general._fx_dns;
-    const source_devices=length(dns_options?.sources || []) ? dns_options.sources : [lab_iface];
+    const source_devices=general.tproxy_ifaces_v4 || [lab_iface];
     for (let name in source_devices) if (!match(name,/^[A-Za-z0-9_.-]{1,15}$/)) die('Invalid source device');
     const tcp4_enabled = length(general.tcp_balancer_v4 || []) > 0;
     const udp4_enabled = length(general.udp_balancer_v4 || []) > 0;

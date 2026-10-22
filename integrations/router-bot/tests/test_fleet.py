@@ -135,6 +135,7 @@ class FleetTransactionTests(unittest.TestCase):
             db.executescript('CREATE TABLE operations(state TEXT);CREATE TABLE router_ids(seq INTEGER PRIMARY KEY,router TEXT);INSERT INTO router_ids VALUES(1,"lab");CREATE TABLE grants(uid INTEGER,router TEXT);INSERT INTO grants VALUES(123,"lab");')
         self.config={'admin_id':1,'bot_username':'xtlsproroutbot','ssh_key':str(self.root/'key'),'known_hosts':str(self.pins),'database':str(self.db),'fleet_profile':{'profile_id':PROFILE},'routers':{'lab':{'host':P['host'],'port':22,'name':'LAB','rescue':{'host':'127.0.0.1','port':22002}}}}
         self.config_path.write_text(json.dumps(self.config));self.old_config=self.config_path.read_text();self.old_pins=self.pins.read_text()
+        self.config=pilot.b.load_config(self.config_path)
         self.state=None;self.calls=[];self.commands=[];self.rescue_fails=False;self.start_fails=False;self.commit_lost=False
         def remote(config,router,pins,command,input_data=None):
             self.calls.append(command)
@@ -162,6 +163,37 @@ class FleetTransactionTests(unittest.TestCase):
         original_mkdtemp=tempfile.mkdtemp
         self.patchers=[patch.object(f,'CONFIG',self.config_path),patch.object(f,'remote',side_effect=remote),patch.object(f,'command',side_effect=cmd),patch.object(f,'relay'),patch.object(f,'enrollment_port',return_value=22003),patch.object(f,'db_owner',owner),patch.object(f.time,'sleep'),patch.object(f.pwd,'getpwnam',return_value=SimpleNamespace(pw_uid=os.getuid(),pw_gid=os.getgid())),patch.object(f.tempfile,'mkdtemp',side_effect=lambda **kw:original_mkdtemp(dir=self.root,prefix='backup.'))]
         for p in self.patchers:p.start();self.addCleanup(p.stop)
+
+    def test_missing_rich_default_does_not_reject_enrollment(self):
+        self.assertNotIn('rich_messages',json.loads(self.old_config))
+        self.assertIs(self.config['rich_messages'],True)
+        f.enroll(self.config,P,'lab',None)
+        self.assertEqual(json.loads(self.config_path.read_text())['routers']['lab']['device_id'],DEVICE)
+
+    def test_explicit_rich_disabled_is_preserved(self):
+        raw=json.loads(self.old_config);raw['rich_messages']=False
+        self.config_path.write_text(json.dumps(raw))
+        f.enroll(pilot.b.load_config(self.config_path),P,'lab',None)
+        self.assertIs(json.loads(self.config_path.read_text())['rich_messages'],False)
+
+    def test_real_configuration_change_still_rejects_before_remote_actions(self):
+        raw=json.loads(self.old_config);raw['rich_messages']=False
+        self.config_path.write_text(json.dumps(raw))
+        with self.assertRaisesRegex(pilot.b.SafeError,'Конфигурация изменилась'):
+            f.enroll(self.config,P,'lab',None)
+        self.assertEqual(self.calls,[])
+        self.assertEqual(self.commands,[])
+        self.assertIs(json.loads(self.config_path.read_text())['rich_messages'],False)
+
+    def test_change_during_enrollment_is_not_overwritten(self):
+        changed=json.loads(self.old_config);changed['rich_messages']=False
+        def change_during_probe(*args):
+            self.config_path.write_text(json.dumps(changed))
+        with patch.object(f,'relay',side_effect=change_during_probe):
+            with self.assertRaisesRegex(pilot.b.SafeError,'Конфигурация или ключи изменились'):
+                f.enroll(self.config,P,'lab',None)
+        self.assertEqual(json.loads(self.config_path.read_text()),changed)
+        self.assertEqual(self.state['state'],'rolled_back')
 
     def test_enroll_and_repeat_preserve_lab_id_grants_and_ports(self):
         f.enroll(self.config,P,'lab',None)
