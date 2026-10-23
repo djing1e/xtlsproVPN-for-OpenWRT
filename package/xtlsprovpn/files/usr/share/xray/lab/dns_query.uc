@@ -40,5 +40,5 @@ if ((ord(data,p)&192)==192) p+=2;
 else {while(p<length(data) && ord(data,p))p+=ord(data,p)+1;p++;}
 if (p+10>length(data)) die('Malformed DNS answer');
 let ttl=(ord(data,p+4)<<24)|(ord(data,p+5)<<16)|(ord(data,p+6)<<8)|ord(data,p+7);
-if (expected!=null && ttl!=expected) die('DNS TTL differs from requested value');
+if (expected!=null && ttl!=expected) die('DNS '+mode+' on 127.0.0.1:'+port+': TTL '+ttl+', expected '+expected);
 printf('%J\n',{ok:true,protocol:mode,ttl});

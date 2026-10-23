@@ -1,0 +1,23 @@
+# Default DNS forwarding isolation
+
+On Dimarouternew, standalone DNS and TTL probes returned TTL 60. Applying the same settings failed only when checking the answer through dnsmasq on port 53. Its UCI configuration contained `server=1.1.1.1` and `noresolv=1`, while the generated application include added loopback forwarders. The same package on another router had no explicit global server and passed the TTL checks.
+
+Adding `server=/#/127.0.0.1#10553` is not an exclusive upstream selection. The dnsmasq maintainer explains that /#/ is equivalent to an unqualified default server: https://lists.thekelleys.org.uk/pipermail/dnsmasq-discuss/2022q3/016519.html . Existing global servers can therefore compete with the application's default forwarding path.
+
+`dns_forward.uc up` temporarily removes global UCI servers (including /#/ entries) and sets noresolv=1 before dnsmasq is restarted with the application's include. Named split DNS routes and unrelated DHCP settings remain intact. Per-instance mode affects only the selected dnsmasq sections. `down` restores previous values only while they still match the application's last write. The private atomic state file is saved before committing UCI, survives boot, and remains available for retry if restoring DHCP fails.
+
+DNS application rollback restarts the previous Xray configuration, using the same lifecycle restoration and reacquisition. Proxy stop restores the direct DNS configuration. The TTL validation remains strict; an error now identifies the port, actual TTL and expected TTL.
+
+Tests cover the observed explicit-server configuration, repeated activation and stop, absent options, split DNS, per-instance selection, administrator edits and failed UCI commits. Hardware confirmation on Dimarouternew (2026-10-23): the 1.4.3-r1 code-only installer verified all hashes and saved backup /root/xtls-before-dns-forward.PMEDAn. The user then successfully applied DNS settings, and dns_query.uc against port 53 returned ok=true and TTL 60 for both UDP and TCP. Stop/start and reboot checks were subsequently completed on LAB; see the validation record below. This change does not establish the cause of Instagram failures or fix DNS application while Xray is stopped.
+
+The code-only installer `scripts/fix-dns-forwarding-143.sh` requires an archive containing it as install.sh and the three corrected files under files/. It verifies payload and installed source hashes, refuses modified code, keeps a private backup, and does not restart services or change DHCP itself. After installation, repeat DNS apply in LuCI. The code-only installer keeps the APK version at 1.4.3-r1; both corrections are included in the 1.4.4-r1 package.
+
+The screenshots show `1.1.1.1` under LAN interface Advanced Settings on both routers (`network.lan.dns`). This is distinct from the competing global dnsmasq `dhcp.@dnsmasq[0].server` found only on Dimarouternew. The helper only edits the latter server option and noresolv; it never changes network interface DNS settings.
+
+LAB hardware validation (2026-10-23): after installing the same code-only patch, UDP/TCP DNS on port 53 returned TTL 60; stopping the proxy retained DNS resolution and direct HTTPS 204; starting again verified the main proxy route and reached LAB ACTIVE. After reboot, TTL 60, main-route HTTPS 204 and NetBird connected were observed. A separate clean reboot without manually refreshing the subscription produced watchdog healthy, zero failures/restarts and proxy_ok=true at uptime approximately 38 seconds. The earlier confirming_failure indication was transient; no monitor hang was established.
+
+## OpenWrt 25.12.6 application updater
+
+The release manifest and external installers already permit 25.12.6, but xray-lab-package worker still had an early exact 25.12.5-only guard. This rejected LuCI updates before the manifest could be inspected. The worker now permits exactly 25.12.5 or 25.12.6 and still requires aarch64 plus explicit compatibility in the verified manifest. Tests run the real worker for both check and install on 25.12.6, reject unsupported firmware/architectures before download, and reject a manifest lacking 25.12.6. The narrow code-only script scripts/fix-package-openwrt-25126.sh corrects the known legacy guard, validates shell syntax, backs up the original file and refuses unknown guards. Services and package configuration are not changed by that script.
+
+Kalyanka / OpenWrt 25.12.6: after applying the version-guard correction (backup /root/xray-package-before-25126.HAFmBK), the user reported the LuCI update page showing installed 1.4.3-r1, stable 1.4.3-r1 and successful checks. This confirms the previous platform rejection was removed; installation of 1.4.4 remains a later device check.
