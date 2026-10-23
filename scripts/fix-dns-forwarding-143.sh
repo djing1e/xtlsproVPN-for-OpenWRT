@@ -11,7 +11,7 @@ exec 9>"$root/var/run/xray-lab-control/action.lock"
 flock -n 9 || { echo 'Дождитесь завершения операции Xray';exit 1; }
 cd "$source_dir/files"
 sha256sum -c - <<'SUMS'
-413753d556a51c8ce7dd8f8a8bbc0d40089bf2c4de8f65372168a9acb2fbe5a4  etc/init.d/xray_core
+bafb1920647e51d5a3af04bad6653326a659dd7ba70daf1b65db34ceedde7780  etc/init.d/xray_core
 5aafa505011fb015d3bf2e325cc9a86c164b6e7131953d102209e81652e024d1  usr/share/xray/lab/dns_forward.uc
 be427ca91b5599b6262b0d57562e32cfe1522611969dc423b7817d21859e4621  usr/share/xray/lab/dns_query.uc
 SUMS
@@ -22,7 +22,7 @@ for file in $files;do
     if [ -e "$target" ];then
         current=$(sha256sum "$target");current=${current%% *}
         case "$file:$current" in
-            etc/init.d/xray_core:aaea58c386adbd59147f1dfebcde417a785944a3143c1846c82e3449ee6986e1|etc/init.d/xray_core:413753d556a51c8ce7dd8f8a8bbc0d40089bf2c4de8f65372168a9acb2fbe5a4|usr/share/xray/lab/dns_forward.uc:5aafa505011fb015d3bf2e325cc9a86c164b6e7131953d102209e81652e024d1|usr/share/xray/lab/dns_query.uc:7ebd1747911c05bcfa1854ab1a885ce1041ccf0e864aef60340d6b13fc286af9|usr/share/xray/lab/dns_query.uc:be427ca91b5599b6262b0d57562e32cfe1522611969dc423b7817d21859e4621) ;;
+            etc/init.d/xray_core:aaea58c386adbd59147f1dfebcde417a785944a3143c1846c82e3449ee6986e1|etc/init.d/xray_core:bafb1920647e51d5a3af04bad6653326a659dd7ba70daf1b65db34ceedde7780|usr/share/xray/lab/dns_forward.uc:5aafa505011fb015d3bf2e325cc9a86c164b6e7131953d102209e81652e024d1|usr/share/xray/lab/dns_query.uc:7ebd1747911c05bcfa1854ab1a885ce1041ccf0e864aef60340d6b13fc286af9|usr/share/xray/lab/dns_query.uc:be427ca91b5599b6262b0d57562e32cfe1522611969dc423b7817d21859e4621) ;;
             *) echo "Неизвестная версия файла: $file";exit 1;;
         esac
     else [ "$file" = usr/share/xray/lab/dns_forward.uc ] || exit 1;fi

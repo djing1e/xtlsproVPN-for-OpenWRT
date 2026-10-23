@@ -137,7 +137,7 @@ setup_dnsmasq_instance() {
 
 setup_dnsmasq() {
     if [ "$(uci_get_by_type general dnsmasq_integration_mode)" == "per_instance" ]; then
-        [ -n "$(uci_get_by_type general dnsmasq_instances)" ] || return 1
+        [ -n "$(uci_get_by_type general dnsmasq_instances)" ] || return 0
         /usr/bin/ucode /usr/share/xray/lab/dns_forward.uc up $(uci_get_by_type general dnsmasq_instances) || return 1
         for instance in $(uci_get_by_type general dnsmasq_instances); do
             setup_dnsmasq_instance ${instance}
