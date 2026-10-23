@@ -13,7 +13,7 @@ class Installer(unittest.TestCase):
                     p=b/'files'/name;p.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(ROOT/'package/xtlsprovpn/files'/name,p)
                 before={}
                 for name in FILES[:3]:
-                    data=subprocess.check_output(['git','show','a0870c13b0847d3b59a79b2d59969c8800418b74:package/xtlsprovpn/files/'+name],cwd=ROOT)
+                    data=(ROOT/'tests/fixtures/dns-forward-144'/Path(name).name).read_bytes()
                     p=r/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(data);before[name]=data
                 (b/'FILES.sha256').write_text(''.join(hashlib.sha256((b/'files'/n).read_bytes()).hexdigest()+'  '+n+'\n' for n in FILES))
                 shutil.copy2(ROOT/'scripts/fix-netbird-dns-144.sh',b/'install.sh')
