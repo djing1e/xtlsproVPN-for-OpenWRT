@@ -115,6 +115,7 @@ function upgrade_package() {
     if (fs.stat('/root/.config/netbird'))
         checked(['tar','-czf',RUN+'/identity-before-update.tar.gz','-C','/root/.config','netbird'],20,'Не удалось сохранить резервную копию регистрации NetBird');
     fs.chmod(RUN+'/identity-before-update.tar.gz',0600);
+    checked(['/usr/bin/xray-dns-bind'],30,'Не удалось разделить DNS-слушатели NetBird и dnsmasq');
     checked([GUARD,'stop'],10,'Не удалось приостановить наблюдение NetBird');
     let failure=null;
     try {
@@ -240,6 +241,7 @@ function perform(action,p) {
     let help=capture([BIN,'up','--help'],5);
     for (let flag in ['--disable-dns','--disable-client-routes','--disable-server-routes','--interface-name','--allow-server-ssh','--setup-key-file','--disable-auto-connect'])
         if (!help.ok || index(help.text,flag)<0) die('Установленная версия NetBird не поддерживает необходимые параметры. Обновите пакет NetBird.');
+    checked(['/usr/bin/xray-dns-bind'],30,'Не удалось разделить DNS-слушатели NetBird и dnsmasq');
     checked([SERVICE,'start'],15,'Не удалось запустить службу NetBird');
     // 'up' on an already connected daemon can silently ignore new settings.
     checked([BIN,'down'],15,'Не удалось подготовить NetBird к применению настроек');

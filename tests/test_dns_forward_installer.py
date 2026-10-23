@@ -16,7 +16,7 @@ class DNSForwardInstaller(unittest.TestCase):
                 d=Path(temp);root=d/'root';bundle=d/'bundle';bins=d/'bin';bins.mkdir();bundle.mkdir()
                 for name in FILES:
                     target=bundle/'files'/name;target.parent.mkdir(parents=True,exist_ok=True)
-                    shutil.copy2(ROOT/'package/xtlsprovpn/files'/name,target)
+                    shutil.copy2(ROOT/'tests/fixtures/dns-forward-144/xray_core' if name=='etc/init.d/xray_core' else ROOT/'package/xtlsprovpn/files'/name,target)
                 shutil.copy2(ROOT/'scripts/fix-dns-forwarding-143.sh',bundle/'install.sh')
                 for name in ('etc/init.d/xray_core','usr/share/xray/lab/dns_query.uc'):
                     target=root/name;target.parent.mkdir(parents=True,exist_ok=True)

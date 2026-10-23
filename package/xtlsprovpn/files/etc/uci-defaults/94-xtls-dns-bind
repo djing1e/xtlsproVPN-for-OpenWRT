@@ -1,0 +1,3 @@
+#!/bin/sh
+# Persist the listener split on package upgrade; no NetBird reconnect needed.
+/usr/bin/xray-dns-bind
