@@ -12,4 +12,4 @@ Startup and watchdog health checks use a dedicated loopback SOCKS listener on 11
 
 Regression tests simulate a bad extra node, a failing first automatic candidate, a first candidate with broken DNS, all automatic candidates failing, and a selected manual node failing. Existing transaction, rollback, memory and validation tests remain enabled.
 
-This change does not claim that a bad node explains every symptom of the HOME incident: the dead NetBird resolver and inaccessible public UDP DNS servers were independently observed. DNS recovery while the proxy is stopped is a separate known issue. This branch does not install changes on routers or publish a new APK.
+This change does not claim that a bad node explains every symptom of the HOME incident: the dead NetBird resolver and inaccessible public UDP DNS servers were independently observed. DNS recovery while the proxy is stopped is a separate known issue. These changes are prepared for 1.4.3-r1. Publishing the release does not install it on routers.
