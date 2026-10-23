@@ -6,7 +6,8 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
-LIB = ROOT/'package/xtlsprovpn/files/usr/share/xray/lab'
+# The v1.4.1 hotfix intentionally downloads immutable historical bytes.
+LIB = Path(__file__).resolve().parent/'fixtures/card-version-141'
 SCRIPT = ROOT/'integrations/router-bot/router/fix-card-version.sh'
 
 @unittest.skipUnless(shutil.which('ucode'), 'ucode runtime required')

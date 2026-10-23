@@ -128,7 +128,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 echo 'Downloading subscription into a private staging directory; live services retained...'
-FX_STATE_DIR="$WORK/staged" FX_RUN_DIR="$WORK/fetch" FX_NO_RELOAD=1 FX_FALLBACK_SOCKS=127.0.0.1:1080 forkop-xray update
+FX_STATE_DIR="$WORK/staged" FX_RUN_DIR="$WORK/fetch" FX_NO_RELOAD=1 forkop-xray update
 : > "$WORK/config/xray_core"
 FX_SUBSCRIPTION_CACHE="$WORK/staged/subscription.json" ucode "$LIB/lab_prepare.uc" "$WORK/config"
 XRAY_UCI_CONFIG_DIR="$WORK/config" ucode "$LIB/gen_config.uc" > "$WORK/config.json"
@@ -177,28 +177,47 @@ if [ "$unchanged" != 1 ];then
             if [ "$code" = 204 ];then ok=1;break;fi
             sleep 1
         done
-        [ "$ok" = 1 ] || { echo "Candidate HTTPS failed on local probe $port. Live state retained.";exit 1; }
+        [ "$ok" = 1 ] || { echo "Candidate HTTPS failed on local probe $port.";return 1; }
     }
     probe_dns() {
         if ! nslookup -type=A -timeout=3 -retry=1 openwrt.org 127.0.0.1:11981 > "$WORK/probe-dns" 2>&1 ||
             ! grep -q '^Name:' "$WORK/probe-dns";then
-            echo 'Candidate DNS failed. Live state retained.';exit 1
+            echo 'Candidate DNS failed.';return 1
         fi
     }
     echo 'Testing changed nodes, selected proxy and DNS in a separate process...'
     if [ "$probe_mode" = sequential ];then
+        activation_ok=0
         while read -r port probe dns;do
             echo "Subscription probe step: SOCKS $port; DNS check=$dns"
             start_probe "$probe"
-            probe_https "$port"
-            [ "$dns" != 1 ] || probe_dns
+            if ! probe_https "$port";then
+                stop_probe
+                [ "$dns" != 1 ] || { echo 'Selected manual node failed; live state retained.';exit 1; }
+                echo 'Unavailable candidate node; checking the remaining paths.'
+                continue
+            fi
+            if [ "$dns" != 0 ];then
+                if ! probe_dns;then
+                    stop_probe
+                    [ "$dns" != 1 ] || { echo 'Selected manual node DNS failed; live state retained.';exit 1; }
+                    echo 'Candidate path DNS failed; checking the remaining paths.'
+                    continue
+                fi
+                activation_ok=1
+            fi
             awk '/^(VmRSS|VmHWM):/' "/proc/$PROBE_PID/status" || :
             stop_probe
+            [ "$activation_ok" != 1 ] || break
         done < "$WORK/ports"
+        [ "$activation_ok" = 1 ] || { echo 'No candidate path passed HTTPS and DNS; live state retained.';exit 1; }
     else
         start_probe "$WORK/probe.json"
-        for port in $(cat "$WORK/ports") 11980;do probe_https "$port";done
-        probe_dns
+        for port in $(cat "$WORK/ports");do
+            if ! probe_https "$port";then echo 'Unavailable candidate node; continuing pool validation.';fi
+        done
+        probe_https 11980 || { echo 'Candidate active path failed; live state retained.';exit 1; }
+        probe_dns || { echo 'Candidate active DNS failed; live state retained.';exit 1; }
     fi
     stop_probe
     if [ "$WAS_RUNNING" = 1 ];then

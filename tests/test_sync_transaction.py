@@ -28,7 +28,10 @@ elif name=='ucode':
  elif a[0].endswith('sync_probe.uc'):
   sequential=scenario.startswith('sequential')
   Path(a[3]).write_text('{}')
-  if sequential:
+  if scenario.startswith('sequential-auto'):
+   Path(a[3]+'.0').write_text('{}');Path(a[3]+'.1').write_text('{}')
+   Path(a[4]).write_text('11980 '+a[3]+'.0 2\\n11980 '+a[3]+'.1 2\\n')
+  elif sequential:
    Path(a[3]+'.0').write_text('{}');Path(a[3]+'.1').write_text('{}')
    Path(a[4]).write_text('12000 '+a[3]+'.0 0\\n11980 '+a[3]+'.1 1\\n')
   else:Path(a[4]).write_text('12000\\n')
@@ -40,7 +43,7 @@ elif name=='xray':
  if '-test' in a:
   if scenario=='config-fail':sys.exit(1)
  else:
-  event('probe-start')
+  event('probe-start');(root/'current-probe').write_text(a[-1])
   def stop(*args):
    event('probe-stop');sys.exit(0)
   signal.signal(signal.SIGTERM,stop);time.sleep(60)
@@ -48,9 +51,13 @@ elif name=='utpl':print('')
 elif name=='nft':
  if scenario=='nft-fail':sys.exit(1)
 elif name=='curl':
- if scenario in ('candidate-fail','sequential-candidate-fail'):sys.exit(1)
+ if scenario in ('candidate-fail','sequential-candidate-fail','sequential-auto-all-fail','sequential-manual-fail'):sys.exit(1)
+ if scenario=='sequential-manual-fail' and any(':11980' in v for v in a):sys.exit(1)
+ if scenario in ('candidate-bad-extra','sequential-bad-extra') and any(':12000' in v for v in a):sys.exit(1)
+ if scenario=='sequential-auto-first-fail' and (root/'current-probe').read_text().endswith('.0'):sys.exit(1)
  print('204')
 elif name=='nslookup':
+ if scenario=='sequential-auto-first-dns-fail' and a[-1].endswith(':11981') and (root/'current-probe').read_text().endswith('.0'):sys.exit(1)
  if (scenario in ('candidate-dns-fail','sequential-dns-fail') and a[-1].endswith(':11981')) or (scenario=='live-dns-fail' and state.read_text()=='new'):sys.exit(1)
  print('Name: openwrt.org\\nAddress: 64.226.122.113')
 elif name=='jsonfilter':
@@ -69,7 +76,7 @@ else:raise RuntimeError(name)
 '''
 class SyncTransaction(unittest.TestCase):
  def test_failures_preserve_or_restore_working_state(self):
-  for scenario in ('download-fail','config-fail','nft-fail','candidate-fail','candidate-dns-fail','restart-fail','live-health-fail','live-dns-fail','success','unchanged','rollback-copy-fail','rollback-restart-fail','rollback-health-fail','commit-before-fail','commit-after-fail','sequential-success','sequential-candidate-fail','sequential-dns-fail','low-memory'):
+  for scenario in ('download-fail','config-fail','nft-fail','candidate-fail','candidate-dns-fail','restart-fail','live-health-fail','live-dns-fail','success','unchanged','rollback-copy-fail','rollback-restart-fail','rollback-health-fail','commit-before-fail','commit-after-fail','sequential-success','sequential-candidate-fail','sequential-dns-fail','low-memory','candidate-bad-extra','sequential-bad-extra','sequential-auto-first-fail','sequential-auto-first-dns-fail','sequential-auto-all-fail','sequential-manual-fail'):
    with self.subTest(scenario=scenario),tempfile.TemporaryDirectory() as t:
     p=Path(t);tools=p/'tools';tools.mkdir();state=p/'catalogue';state.mkdir();run=p/'run';run.mkdir()
     (state/'subscription.json').write_text('old-catalogue');(state/'device-hwid-short').write_text('original-id');(p/'xray_core').write_text('old-core');(p/'service-state').write_text('old');(p/'events').write_text('');(p/'meminfo').write_text('MemAvailable: '+('10000' if scenario=='low-memory' else '49152' if scenario.startswith('sequential') else '200000')+' kB\n')
@@ -83,9 +90,9 @@ class SyncTransaction(unittest.TestCase):
     command=p/'sync';command.write_text(source)
     env={**os.environ,'PATH':str(tools)+':'+os.environ['PATH'],'TEST_ROOT':str(p),'TEST_SCENARIO':scenario}
     r=subprocess.run(['sh',str(command)],env=env,capture_output=True,text=True,timeout=20)
-    success=scenario in ('success','unchanged','sequential-success');self.assertEqual(r.returncode==0,success,r.stdout+r.stderr)
+    success=scenario in ('success','unchanged','sequential-success','candidate-bad-extra','sequential-bad-extra','sequential-auto-first-fail','sequential-auto-first-dns-fail');self.assertEqual(r.returncode==0,success,r.stdout+r.stderr)
     self.assertEqual((state/'subscription.json').read_text(),'new-catalogue' if success or scenario.startswith('commit-') else 'old-catalogue')
-    self.assertEqual((p/'xray_core').read_text(),'new-core' if scenario in ('success','sequential-success','rollback-copy-fail','commit-before-fail','commit-after-fail') else 'old-core')
+    self.assertEqual((p/'xray_core').read_text(),'new-core' if scenario in ('success','sequential-success','candidate-bad-extra','sequential-bad-extra','sequential-auto-first-fail','sequential-auto-first-dns-fail','rollback-copy-fail','commit-before-fail','commit-after-fail') else 'old-core')
     self.assertEqual((state/'device-hwid-short').read_text(),'original-id')
     marker=run/'subscription-recovery'
     if scenario.startswith('rollback-'):
@@ -108,6 +115,6 @@ class SyncTransaction(unittest.TestCase):
      if line=='probe-start':active+=1;self.assertLessEqual(active,1)
      if line=='probe-stop':active-=1
     if scenario=='sequential-success':self.assertEqual(events.count('probe-start'),2)
-    if scenario.startswith(('download','config','nft','candidate')) or scenario in ('unchanged','low-memory','sequential-candidate-fail','sequential-dns-fail'):self.assertNotIn('restart-',events)
+    if (scenario.startswith(('download','config','nft','candidate')) and not success) or scenario in ('unchanged','low-memory','sequential-candidate-fail','sequential-dns-fail','sequential-manual-fail','sequential-auto-all-fail'):self.assertNotIn('restart-',events)
     if scenario in ('restart-fail','live-health-fail','live-dns-fail'):self.assertIn('restart-old',events);self.assertEqual((p/'service-state').read_text(),'old')
 if __name__=='__main__':unittest.main()

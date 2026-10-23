@@ -167,7 +167,7 @@ function fetch(s) {
     fs.writefile(run_dir + '/curl.conf', cfg); fs.chmod(run_dir + '/curl.conf', 0600);
     let args = ['curl', '--fail', '--silent', '--show-error', '--location', '--max-redirs', '3',
         '--ipv4', '--proto', '=https', '--proto-redir', '=https', '--connect-timeout', '15', '--max-time', '60',
-        '--max-filesize', '2097152', '--compressed', '--config', run_dir + '/curl.conf',
+        '--max-filesize', '2097152', '--compressed', '--noproxy', '*', '--config', run_dir + '/curl.conf',
         '--dump-header', headers, '--output', body];
     try {
         let report = run_dir + '/download.status';
@@ -176,12 +176,8 @@ function fetch(s) {
             let http=trim(fs.readfile(report) || '');fs.unlink(report);
             return {rc,http:match(http,/^[0-9]{3}$/)?http:'000'};
         }
-        let result=download(args), fallback=getenv('FX_FALLBACK_SOCKS');
-        // One optional alternative transport for lab control traffic, never HTTP/auth/TLS retries.
-        if (fallback && match(fallback,/^127\.0\.0\.1:[0-9]{1,5}$/) && result.http=='000' && index([6,7,28],result.rc)>=0) {
-            fs.unlink(body);fs.unlink(headers);
-            result=download([...args,'--max-time','30','--noproxy','','--proxy','socks5h://'+fallback]);
-        }
+        // Control-plane downloads do not depend on any subscription node.
+        let result=download(args);
         if (result.rc != 0) die('Subscription download failed: curl=' + result.rc + ', HTTP=' + result.http + '; previous state retained');
         accept(body, headers, s, true);
     } catch (err) {

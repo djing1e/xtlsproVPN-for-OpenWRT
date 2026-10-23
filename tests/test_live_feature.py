@@ -18,6 +18,8 @@ class LiveFeature(unittest.TestCase):
      auto=next(b for b in c['routing']['balancers'] if b['tag']=='fx_auto_pool');self.assertEqual(auto['selector'],['fx_node:cfgaaaaaa','fx_node:cfgbbbbbb'])
      self.assertTrue(any(x.get('inboundTag')==['fx_auto_dispatch'] and x.get('balancerTag')=='fx_auto_pool' for x in c['routing']['rules']))
      main=next(b for b in c['routing']['balancers'] if b['tag']=='fx_main');self.assertEqual(len(main['selector']),1 if mode=='manual' else 2)
+     health=next(x for x in c['inbounds'] if x['tag']=='fx_health');self.assertEqual(health['listen'],'127.0.0.1');self.assertEqual(health['port'],11499)
+     self.assertEqual(c['routing']['rules'][0],{'type':'field','inboundTag':['fx_health'],'balancerTag':'fx_main'})
  def test_native_generator_selection_changes_only_main_balancer(self):
   self.enc='none';self.pub='A'*43;native.CatalogueTests.setUp(self)
   u=native.CatalogueTests.prepare(self);u['general'].update(fx_dashboard='1',fx_mode='manual')

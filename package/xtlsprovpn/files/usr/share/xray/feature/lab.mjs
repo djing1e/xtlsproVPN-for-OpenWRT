@@ -45,5 +45,10 @@ export function lab_features(i, config) {
     i.stats = {};
     i.policy.system = {statsInboundUplink:true,statsInboundDownlink:true,statsOutboundUplink:true,statsOutboundDownlink:true};
     i.log={loglevel:g.loglevel || 'warning',access:g.fx_access_log=='1'?'/var/log/xray-lab-access.log':'none',error:'/var/log/xray-lab-error.log'};
-    return roscom_features(i, config);
+    i=roscom_features(i, config);
+    // Validate the active proxy route independently of client DIRECT rules.
+    push(i.inbounds,{tag:'fx_health',listen:'127.0.0.1',port:11499,
+        protocol:'socks',settings:{auth:'noauth',udp:false}});
+    splice(i.routing.rules,0,0,{type:'field',inboundTag:['fx_health'],balancerTag:'fx_main'});
+    return i;
 };
