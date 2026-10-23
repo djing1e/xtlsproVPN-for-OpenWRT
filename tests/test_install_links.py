@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -31,7 +32,7 @@ apk)
     case "$3:$INSTALLED" in
       xtlsprovpn:absent) exit 1 ;;
       xtlsprovpn:*) exit 0 ;;
-      'xtlsprovpn=1.4.2-r1:same'|'xtlsprovpn>1.4.2-r1:newer') exit 0 ;;
+      "xtlsprovpn=$TARGET_VERSION:same"|"xtlsprovpn>$TARGET_VERSION:newer") exit 0 ;;
       *) exit 1 ;;
     esac
   fi ;;
@@ -51,7 +52,7 @@ esac
             calls = d / "calls"
             env = dict(os.environ, PATH=str(bindir) + ":" + os.environ["PATH"],
                        CALLS=str(calls), INSTALLED=installed, DOWNLOAD=download,
-                       CHECKSUM=checksum, ARCH=arch, IPV4_FETCH='1' if ipv4_fetch else '0')
+                       CHECKSUM=checksum, ARCH=arch, TARGET_VERSION=re.search(r"^VERSION='(.*?)'", (ROOT / (mode + '.sh')).read_text(), re.M)[1], IPV4_FETCH='1' if ipv4_fetch else '0')
             r = subprocess.run(["sh", str(script)], env=env,
                                capture_output=True, text=True)
             log = calls.read_text() if calls.exists() else ""
