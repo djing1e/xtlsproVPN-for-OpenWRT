@@ -17,9 +17,9 @@ VERSION='1.1.2-r1'
 APK=b'isolated application package fixture'
 DIGEST=hashlib.sha256(APK).hexdigest()
 
-def fixture():
+def fixture(platforms=('25.12.5','25.12.6')):
     name='xtlsprovpn-'+VERSION+'.apk'
-    manifest={'schema':1,'tag':'v1.1.2','version':VERSION,'openwrt':['25.12.5'],
+    manifest={'schema':1,'tag':'v1.1.2','version':VERSION,'openwrt':list(platforms),
               'architectures':['aarch64'],'installed_size_kb':4096,
               'apk':{'name':name,'sha256':DIGEST,'size':len(APK)}}
     body=(json.dumps(manifest)+'\n').encode()
@@ -35,7 +35,7 @@ import json,os,re,shutil,subprocess,sys
 from pathlib import Path
 r=Path(os.environ['TEST_ROUTER']);mode=os.environ.get('TEST_MODE','ok');a=sys.argv[1:];cmd=Path(sys.argv[0]).name
 with (r/'calls').open('a') as f:f.write(json.dumps([cmd]+a)+'\n')
-if cmd=='uname':print('aarch64')
+if cmd=='uname':print(os.environ.get('TEST_ARCH','aarch64'))
 elif cmd=='sync':pass
 elif cmd=='sleep':pass
 elif cmd=='pidof':sys.exit(1)
@@ -112,13 +112,14 @@ class PackageUpdate(unittest.TestCase):
                 elif case=='bad-arch':arch='mips'
                 p,_=self.run_model(r,m,platform,arch);self.assertNotEqual(p.returncode,0)
 
-    def run_worker(self,mode='ok',action='install',expected=VERSION,digest=DIGEST):
+    def run_worker(self,mode='ok',action='install',expected=VERSION,digest=DIGEST,
+                   platform='25.12.5',arch='aarch64',platforms=('25.12.5','25.12.6')):
         with tempfile.TemporaryDirectory(prefix='xtls-package.fixture.') as temp:
             r=Path(temp);work=r/'xtls-package.work';work.mkdir();bindir=r/'bin';bindir.mkdir()
             paths=['var/run/xtlspro-package','var/run/xray-lab-control','var/run/xtlspro-netbird',
                    'etc/config','etc/forkop-xray','etc/netbird','usr/bin','usr/share/xray/lab','usr/libexec/forkop-xray','overlay']
             for path in paths:(r/path).mkdir(parents=True,exist_ok=True)
-            (r/'etc/openwrt_release').write_text("DISTRIB_RELEASE='25.12.5'\n")
+            (r/'etc/openwrt_release').write_text("DISTRIB_RELEASE='"+platform+"'\n")
             (r/'meminfo').write_text('MemAvailable: '+('12000' if mode=='no-ram' else '48000')+' kB\n')
             (r/'etc/config/xray_core').write_text('private router configuration')
             (r/'etc/forkop-xray/subscription.json').write_text('private subscription')
@@ -128,7 +129,7 @@ class PackageUpdate(unittest.TestCase):
             (r/'usr/bin/xray-lab-netbird').chmod(0o755)
             (r/'usr/bin/xray-lab-control').write_text('#!/bin/sh\necho \'{"interception":{"active":true}}\'\n')
             (r/'usr/bin/xray-lab-control').chmod(0o755)
-            release,manifest,body=fixture()
+            release,manifest,body=fixture(platforms)
             if mode in ('same','newer','no-manifest'):
                 if mode=='no-manifest':release['assets'].pop()
             (r/'installed').write_text('1.1.2-r1' if mode=='same' else '1.2.0-r1' if mode=='newer' else '1.1.1-r1')
@@ -150,7 +151,7 @@ class PackageUpdate(unittest.TestCase):
             (r/'usr/bin/xray-lab-package').write_text(worker)
             for name in ('curl','apk','jsonfilter','df','uname','uci','pidof','ucode','sync','sleep'):
                 p=bindir/name;p.write_text(MOCK);p.chmod(0o755)
-            env=dict(os.environ,TEST_ROUTER=str(r),TEST_MODE=mode,PATH=str(bindir)+':'+os.environ['PATH'],
+            env=dict(os.environ,TEST_ROUTER=str(r),TEST_MODE=mode,TEST_ARCH=arch,PATH=str(bindir)+':'+os.environ['PATH'],
                      REAL_UCODE=shutil.which('ucode'),REAL_UCODE_LIB=os.environ.get('LD_LIBRARY_PATH',''))
             lock=None
             if mode=='busy':
@@ -177,6 +178,26 @@ class PackageUpdate(unittest.TestCase):
         self.assertEqual(p.returncode,0,log);self.assertEqual(j['state'],'done');self.assertTrue(b)
         self.assertTrue(any(x[0]=='apk' and x[1]=='add' for x in c))
         self.assertEqual(sum(x[0]=='ucode' and '/dns_query.uc' in x[1] for x in c),2)
+
+    def test_openwrt_25126_check_and_install_use_the_real_worker(self):
+        for action in ('check','install'):
+            with self.subTest(action=action):
+                p,j,c,b,log=self.run_worker(action=action,platform='25.12.6')
+                self.assertEqual(p.returncode,0,log);self.assertEqual(j['state'],'done')
+                self.assertEqual(any(x[0]=='apk' and x[1]=='add' for x in c),action=='install')
+                self.assertEqual(b,action=='install')
+
+    def test_unsupported_firmware_and_architecture_fail_before_download(self):
+        for platform,arch in [('25.12.7','aarch64'),('SNAPSHOT','aarch64'),('25.12.6','mips')]:
+            with self.subTest(platform=platform,arch=arch):
+                p,j,c,b,log=self.run_worker(platform=platform,arch=arch)
+                self.assertNotEqual(p.returncode,0,log);self.assertEqual(j['state'],'failed')
+                self.assertFalse(any(x[0] in ('apk','curl') for x in c));self.assertFalse(b)
+
+    def test_25126_still_requires_permission_in_the_verified_manifest(self):
+        p,j,c,b,log=self.run_worker(platform='25.12.6',platforms=('25.12.5',))
+        self.assertNotEqual(p.returncode,0,log)
+        self.assertFalse(any(x[0]=='apk' and x[1]=='add' for x in c));self.assertFalse(b)
 
     def test_paused_proxy_stays_paused(self):
         p,j,c,_,log=self.run_worker('paused');self.assertEqual(p.returncode,0,log)

@@ -76,8 +76,9 @@ worker)
     ERROR='Выполняется операция NetBird. Дождитесь её завершения.'
     flock -n 8 || exit 1
     . /etc/openwrt_release
-    ERROR='Эта сборка обновлений предназначена для OpenWrt 25.12.5 / aarch64.'
-    [ "${DISTRIB_RELEASE:-}" = 25.12.5 ] && [ "$(uname -m)" = aarch64 ] || exit 1
+    ERROR='Эта сборка обновлений предназначена для OpenWrt 25.12.5/25.12.6 / aarch64.'
+    case "${DISTRIB_RELEASE:-}" in 25.12.5|25.12.6) ;; *) exit 1 ;; esac
+    [ "$(uname -m)" = aarch64 ] || exit 1
     arch=$(uname -m)
     fetch() {
         url=$1;out=$2;limit=$3
