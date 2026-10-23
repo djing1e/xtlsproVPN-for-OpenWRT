@@ -8,7 +8,7 @@ from pathlib import Path
 import tarfile
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = '1.4.3'
+VERSION = '1.4.4'
 DOCS = ('README.md', 'ONBOARDING.md', 'EASY-ENROLLMENT.md', 'ADMIN-MENU.md', 'OPERATIONS.md', 'RECOVERY.md', 'DEVICE-UI-FIX.md', 'PRESENCE-RICH.md')
 SERVER = ('backup.py', 'bot.py', 'connect.py', 'enroll_rescue.py', 'fleet.py', 'install-connect.py',
           'install-daily-backup.py', 'install-operator.py', 'install.py', 'operator_client.py',
