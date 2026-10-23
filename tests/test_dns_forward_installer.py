@@ -11,7 +11,7 @@ FILES=('etc/init.d/xray_core','usr/share/xray/lab/dns_forward.uc','usr/share/xra
 
 class DNSForwardInstaller(unittest.TestCase):
     def test_verified_code_only_install_rejects_bad_input_and_rolls_back_write_failure(self):
-        for case in ('ok','unknown','corrupt','wrong-apk','write-failure'):
+        for case in ('ok','unknown','corrupt','wrong-apk','non-root','write-failure'):
             with self.subTest(case=case),tempfile.TemporaryDirectory() as temp:
                 d=Path(temp);root=d/'root';bundle=d/'bundle';bins=d/'bin';bins.mkdir();bundle.mkdir()
                 for name in FILES:
@@ -25,7 +25,8 @@ class DNSForwardInstaller(unittest.TestCase):
                 shutil.copy2(ROOT/'package/xtlsprovpn/files/usr/share/xray/lab/dns_wire.mjs',root/'usr/share/xray/lab/dns_wire.mjs')
                 if case=='unknown':(root/FILES[0]).write_text('administrator custom code')
                 if case=='corrupt':(bundle/'files'/FILES[1]).write_text('tampered')
-                for name,body in {'apk':"echo xtlsprovpn-"+('1.4.2' if case=='wrong-apk' else '1.4.3')+'-r1',
+                for name,body in {'id':'echo '+('1000' if case=='non-root' else '0'),
+                                  'apk':"echo xtlsprovpn-"+('1.4.2' if case=='wrong-apk' else '1.4.3')+'-r1',
                                   'ucode':'exit 0',
                                   'mv':'''if [ "$TEST_FAIL" = 1 ] && [ "${1##*/}" = dns_forward.uc.dns-fix-new ];then exit 1;fi
 exec /bin/mv "$@"'''} .items():
