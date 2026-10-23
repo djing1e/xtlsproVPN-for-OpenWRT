@@ -111,7 +111,7 @@ class NetBird(unittest.TestCase):
             'xray_core': {'general': {'transparent_proxy_enable':'1'}}
         }
         self.config.write_text(json.dumps(self.original))
-        for name in ['netbird','netbird-service','guard','firewall','apk','pidof','df','sleep']:
+        for name in ['netbird','netbird-service','guard','firewall','apk','pidof','df','sleep','xray-dns-bind']:
             p=self.bin/name;p.write_text(MOCK);p.chmod(0o755)
         self.script=self.r/'netbird.uc'
         source=(FILES/'usr/share/xray/lab/netbird.uc').read_text()
@@ -120,6 +120,7 @@ class NetBird(unittest.TestCase):
         mem=self.r/'meminfo';mem.write_text('MemAvailable: 50000 kB\n')
         source=source.replace('/proc/meminfo',str(mem))
         source=source.replace('/usr/bin/netbird',str(self.bin/'netbird'))
+        source=source.replace('/usr/bin/xray-dns-bind',str(self.bin/'xray-dns-bind'))
         source=source.replace('/etc/init.d/netbird',str(self.bin/'netbird-service'))
         source=source.replace('/etc/init.d/xray_netbird_guard',str(self.bin/'guard'))
         source=source.replace('/etc/init.d/firewall',str(self.bin/'firewall'))
@@ -400,7 +401,8 @@ class NetBird(unittest.TestCase):
         guard=self.r/'watch.sh'
         guard.write_text((FILES/'usr/bin/xray-netbird-guard').read_text()
             .replace('/var/run/xtlspro-netbird',str(self.run))
-            .replace('/var/run/xray-lab-control',str(app)).replace('sleep 30','exit 0'))
+            .replace('/var/run/xray-lab-control',str(app))
+            .replace('/usr/bin/xray-dns-bind',str(self.bin/'xray-dns-bind')).replace('sleep 30','exit 0'))
         for enabled,locked,expected in [('1',None,True),('0',None,False),
             ('1',self.run/'action.lock',False),('1',app/'action.lock',False)]:
             calls=self.r/'guard-calls';calls.unlink(missing_ok=True)
