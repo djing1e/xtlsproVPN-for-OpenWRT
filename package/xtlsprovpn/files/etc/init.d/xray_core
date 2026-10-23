@@ -137,10 +137,13 @@ setup_dnsmasq_instance() {
 
 setup_dnsmasq() {
     if [ "$(uci_get_by_type general dnsmasq_integration_mode)" == "per_instance" ]; then
+        [ -n "$(uci_get_by_type general dnsmasq_instances)" ] || return 1
+        /usr/bin/ucode /usr/share/xray/lab/dns_forward.uc up $(uci_get_by_type general dnsmasq_instances) || return 1
         for instance in $(uci_get_by_type general dnsmasq_instances); do
             setup_dnsmasq_instance ${instance}
         done
     else
+        /usr/bin/ucode /usr/share/xray/lab/dns_forward.uc up || return 1
         config_load dhcp
         setup_dnsmasq_instance
         config_foreach setup_dnsmasq_instance dnsmasq
@@ -149,8 +152,11 @@ setup_dnsmasq() {
 }
 
 flush_dnsmasq() {
+    local failed=0
     rm -f /tmp/dnsmasq.d/xray.conf /tmp/dnsmasq.*.d/xray.conf
-    /etc/init.d/dnsmasq restart > /dev/null 2>&1
+    /usr/bin/ucode /usr/share/xray/lab/dns_forward.uc down || failed=1
+    /etc/init.d/dnsmasq restart > /dev/null 2>&1 || failed=1
+    return "$failed"
 }
 
 create_when_enable() {
