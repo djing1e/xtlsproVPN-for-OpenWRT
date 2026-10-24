@@ -3,6 +3,7 @@
 'require view.xray.core_update_transfer2 as coreUpdate';
 'require view.xray.dns_panel as dnsSettings';
 'require view.xray.schedule as schedule';
+'require view.xray.memory as memoryPanel';
 'require view.xray.subscription as subscriptionPanel';
 'require view';
 'require form';
@@ -25,11 +26,11 @@ return view.extend({
         o.nocreate=true;o.multiple=false;o.rmempty=false;
         o=section.option(form.Value,'fx_watch_delay','Задержка после подъёма интерфейса, мс');o.datatype='range(1000,60000)';o.rmempty=false;
         o=section.option(form.Flag,'fx_access_log','Журнал соединений','Выключен по умолчанию. При включении хранится в RAM и сокращается монитором; используйте для диагностики.');o.rmempty=false;
-        return Promise.all([map.render(),subscriptionPanel.render(),schedule.render(),coreUpdate.render(),dnsSettings.render(initial[1]),routingPanel.render(initial[1])]).then(parts=>{
+        return Promise.all([map.render(),subscriptionPanel.render(),schedule.render(),coreUpdate.render(),dnsSettings.render(initial[1]),routingPanel.render(initial[1]),memoryPanel.render().catch(error=>E('div',{'class':'alert-message warning'},'Не удалось загрузить настройки памяти: '+(error.message || String(error))))]).then(parts=>{
             const content=E('div'), tabs=E('div',{'class':'xt-tabs',role:'tablist','aria-label':'Разделы настроек'});
             const panels=[], controls=[];
-            const labels=['Подписка','DNS и сеть','Маршрутизация','Автообновление','Ядро','Дополнительно'];
-            const items=[parts[1],parts[4],parts[5],parts[2],parts[3],parts[0]];
+            const labels=['Подписка','DNS и сеть','Маршрутизация','Автообновление','Ядро','Память','Дополнительно'];
+            const items=[parts[1],parts[4],parts[5],parts[2],parts[3],parts[6],parts[0]];
             function select(index){
                 panels.forEach((p,i)=>{p.style.display=i===index?'':'none';});
                 controls.forEach((b,i)=>{b.setAttribute('aria-selected',String(i===index));b.tabIndex=i===index?0:-1;});
@@ -45,11 +46,11 @@ return view.extend({
                 const panel=E('div',{id:'xt-panel-'+i,role:'tabpanel','aria-labelledby':'xt-tab-'+i},[items[i]]);
                 panels.push(panel);content.append(panel);
             });
-            select(location.hash==='#dns'?1:0);
+            select(location.hash==='#memory'?5:location.hash==='#dns'?1:0);
             return E('div',{'class':'xt-settings'},[lab.style(),
                 E('style',{},'.xt-settings{max-width:1100px}.xt-tabs{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}.xt-tabs [aria-selected="true"]{border-color:#00b991;color:#00b991}.xt-settings .cbi-map{margin-top:0}'),
                 E('h2',{},'xtlsproVPN'),tabs,content,
-                E('p',{'class':'fx-muted'},'Дополнительные параметры сохраняются кнопкой внизу страницы. Подписка имеет собственную кнопку сохранения. DNS, маршрутизация, расписание и управление ядром имеют собственные кнопки.')]);
+                E('p',{'class':'fx-muted'},'Дополнительные параметры сохраняются кнопкой внизу страницы. Подписка имеет собственную кнопку сохранения. DNS, маршрутизация, расписание, память и управление ядром имеют собственные кнопки.')]);
         });
     }
 });

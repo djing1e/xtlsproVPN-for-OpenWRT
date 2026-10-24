@@ -1,0 +1,20 @@
+#!/usr/bin/ucode
+let fs=require('fs'),op=ARGV[0],method=ARGV[1];
+if(op=='list'){print('{"status":{},"apply":{"enabled":"","size_mb":"","algorithm":""}}');exit(0);}
+if(op!='call')exit(1);
+if(index(['status','apply'],method)<0){print('{"error":"Unknown method"}');exit(0);}
+let input=method=='apply'?(fs.stdin.read(4097) || '{}'):'';
+if(length(input)>4096){print('{"error":"Слишком большой запрос"}');exit(0);}
+let path=null;
+if(method=='apply'){
+    let id=trim(fs.readfile('/proc/sys/kernel/random/uuid') || '');
+    if(!match(id,/^[a-f0-9-]{36}$/)){print('{"error":"Не удалось создать запрос"}');exit(0);}
+    path='/var/run/xtlspro-zram-input-'+id;
+    let f=fs.open(path,'w',0600);
+    if(!f){print('{"error":"Не удалось подготовить запрос"}');exit(0);}
+    f.write(input);f.close();
+}
+let p=fs.popen('/usr/bin/xray-lab-zram '+(method=='status'?'status':'launch < '+path)+' 2>/dev/null','r');
+let body=p?p.read('all'):null,ok=p && p.close()==0;
+if(path)fs.unlink(path);
+print(ok && body?body:'{"error":"Не удалось выполнить операцию ZRAM"}');

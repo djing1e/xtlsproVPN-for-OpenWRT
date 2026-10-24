@@ -1,0 +1,1 @@
+{"luci-app-xray-zram":{"description":"xtlsproVPN ZRAM settings","read":{"ubus":{"xray_lab_zram":["status"]}},"write":{"ubus":{"xray_lab_zram":["apply"]}}}}
