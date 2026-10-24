@@ -27,7 +27,7 @@
     "order": 1,
     "action": {
       "type": "view",
-      "path": "xray/settings_transfer2"
+      "path": "xray/settings_memory147"
     }
   },
   "admin/services/forkop-xray/diagnostics": {
