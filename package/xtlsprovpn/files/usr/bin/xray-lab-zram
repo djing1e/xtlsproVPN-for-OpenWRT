@@ -1,0 +1,20 @@
+#!/bin/sh
+set -eu
+umask 077
+RUN=/var/run/xtlspro-zram
+LIB=/usr/share/xray/lab/zram.uc
+mkdir -p "$RUN"
+chmod 700 "$RUN"
+case "${1:-status}" in
+status) exec ucode "$LIB" status ;;
+launch)
+    mkdir -p /var/run/xray-lab-control
+    exec 9>/var/run/xray-lab-control/action.lock
+    if ! flock -n 9;then echo '{"error":"Выполняется другая операция приложения"}';exit 0;fi
+    if ! ucode "$LIB" stage;then exit 0;fi
+    (trap '' HUP; exec "$0" worker) </dev/null >"$RUN/worker.log" 2>&1 &
+    echo '{"ok":true}'
+    ;;
+worker) exec ucode "$LIB" worker ;;
+*) exit 2 ;;
+esac

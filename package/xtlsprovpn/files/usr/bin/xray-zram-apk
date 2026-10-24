@@ -1,0 +1,16 @@
+#!/bin/sh
+# Keep OpenWrt's package downloader on IPv4, scoped to this operation.
+set -eu
+umask 077
+work=$(mktemp -d /tmp/xtls-zram-install.XXXXXX)
+trap 'rm -rf "$work"' EXIT
+fetch=$(command -v uclient-fetch || true)
+if [ -n "$fetch" ];then
+    printf '#!/bin/sh\nexec "%s" -4 "$@"\n' "$fetch" > "$work/wget"
+    chmod 700 "$work/wget"
+fi
+apk_run() {
+    if [ -n "$fetch" ];then PATH="$work:$PATH" apk --preserve-env "$@";else apk "$@";fi
+}
+apk_run update
+apk_run add zram-swap
