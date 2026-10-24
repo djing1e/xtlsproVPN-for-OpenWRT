@@ -60,3 +60,5 @@ jobs:
         run: |
           python3 -m unittest discover -s tests
           python3 scripts/check-source.py
+          node tests/test_settings_menu_ui.js
+          node tests/test_zram_ui.js
