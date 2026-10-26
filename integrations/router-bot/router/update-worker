@@ -20,7 +20,7 @@ for value in "$id" "$plan"; do
 done
 mkdir -p "$RUN" "$ADMIN"
 chmod 700 "$RUN" "$ADMIN"
-state() { ucode "$UC" set "$component" "$id" "$action" "$1"; }
+state() { ucode "$UC" set "$component" "$id" "$action" "$1" "${phase:-native}"; }
 if [ "$1" = launch ]; then
     exec 7>"$ADMIN/action.lock"
     flock -n 7 || fail busy
@@ -68,8 +68,9 @@ if [ "$action" = install ]; then
     done
     tar -C / -czf "$backup/settings.tar.gz" "$@"
     tar -tzf "$backup/settings.tar.gz" >/dev/null
+    ucode "$UC" dhcp-snapshot "$backup/dhcp.json"
     : > "$backup/preserved.sha256"
-    for path in /etc/config/xray_core /etc/config/xray_lab_dns /etc/config/network /etc/config/dhcp /etc/config/xray_lab_rescue /etc/config/xray_lab_netbird /etc/xtlspro-rescue/id_ed25519 /etc/dropbear/dropbear_ed25519_host_key /root/.ssh/known_hosts; do
+    for path in /etc/config/xray_core /etc/config/xray_lab_dns /etc/config/network /etc/config/xray_lab_rescue /etc/config/xray_lab_netbird /etc/xtlspro-rescue/id_ed25519 /etc/dropbear/dropbear_ed25519_host_key /root/.ssh/known_hosts; do
         [ ! -f "$path" ] || sha256sum "$path" >> "$backup/preserved.sha256"
     done
     if [ "$component" != xray ] && [ -f /usr/libexec/forkop-xray/xray ]; then
@@ -104,10 +105,16 @@ esac
 if [ "$action" = check ]; then
     ucode "$UC" plan "$component" "$id" > /dev/null
 else
+    phase=version
     ucode "$UC" verify "$component" "$plan"
+    phase=settings
     sha256sum -c "$backup/preserved.sha256"
+    ucode "$UC" dhcp-verify "$backup/dhcp.json" "$component"
+    phase=https
     timeout -k 2 25 ucode /usr/share/xray/lab/control.uc health > "$RUN/health.json" 7>&-
     [ "$(jsonfilter -i "$RUN/health.json" -e '@.proxy_ok')" = true ]
+    phase=dns_udp
     timeout -k 2 20 ucode /usr/share/xray/lab/dns_query.uc 53 ipv4 udp 7>&- > /dev/null
+    phase=dns_tcp
     timeout -k 2 20 ucode /usr/share/xray/lab/dns_query.uc 53 ipv4 tcp 7>&- > /dev/null
 fi

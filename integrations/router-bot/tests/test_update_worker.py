@@ -22,6 +22,8 @@ class UpdateWorkerTests(unittest.TestCase):
         self.versions = self.root / 'versions.json'
         self.initial = {'app':'1.3.0-r4','xray':'26.7.28','netbird':'0.78.1-r1'}
         self.versions.write_text(json.dumps(self.initial))
+        self.dhcp = self.root / 'dhcp.json'
+        self.dhcp.write_text(json.dumps({'main':{'.type':'dnsmasq','server':['46.61.250.136'],'notinterface':['vpn0']},'lan':{'.type':'dhcp','interface':'lan'}}))
         self.calls = self.root / 'native-calls'
         for directory in ('xtlspro-package','xtlspro-netbird','xray-lab-control'):
             (self.run / directory).mkdir(exist_ok=True)
@@ -63,6 +65,8 @@ if not check:
  if component=='xray' and a[1:]!=[target]:sys.exit(1)
  if component=='netbird' and os.environ.get('FX_NETBIRD_EXPECTED_VERSION')!=target:sys.exit(1)
  v[component]=target;versions.write_text(json.dumps(v))
+ if (root/'dhcp-after.json').exists():
+  (root/'dhcp.json').write_bytes((root/'dhcp-after.json').read_bytes())
 if component!='xray':
  (path.parent/'job.json').write_text(json.dumps({'action':action,'state':'done','updated':int(time.time())}))
  print('{"ok":true}')
@@ -89,6 +93,7 @@ if component!='xray':
         for source,dest in [('updates.uc',self.uc),('update-worker',self.worker)]:
             text=(BASE/source).read_text()
             for a,b in replacements.items():text=text.replace(a,b)
+            text=text.replace("require('uci').cursor()", "({load:function(){return true;},get_all:function(){return json(fs.readfile('"+str(self.dhcp)+"'));}})")
             text=text.replace('PATH=/usr/sbin:/usr/bin:/sbin:/bin','PATH='+str(self.bins)+':'+os.environ['PATH'])
             text=text.replace('tar -C / ', 'tar -C '+str(self.root)+' ')
             text=text.replace('"/$path"','"'+str(self.root)+'/$path"')
@@ -145,3 +150,62 @@ if component!='xray':
         self.call('launch','install','netbird',REQUEST,PLAN)
         self.assertEqual(self.wait_job()['state'],'failed')
         self.assertEqual(json.loads(self.versions.read_text()),self.initial)
+
+    def install_with_dhcp(self, after, component='app'):
+        self.call('launch','check',component,PLAN,PLAN)
+        self.assertEqual(self.wait_job()['state'],'done')
+        (self.root/'dhcp-after.json').write_text(json.dumps(after))
+        self.call('launch','install',component,REQUEST,PLAN)
+        return self.wait_job()
+
+    def test_app_install_accepts_exact_netbird_listener_migration(self):
+        after=json.loads(self.dhcp.read_text())
+        after['main']['notinterface'].append('wt0')
+        after['main']['nonwildcard']='1'
+        self.assertEqual(self.install_with_dhcp(after)['state'],'done', (self.run/'xtlspro-bot-updates/job.log').read_text())
+        self.assertIn('migration verified',(self.run/'xtlspro-bot-updates/job.log').read_text())
+
+    def test_migration_does_not_hide_upstream_or_lan_changes(self):
+        after=json.loads(self.dhcp.read_text())
+        after['main'].update(notinterface=['vpn0','wt0'],nonwildcard='1',server=['9.9.9.9'])
+        job=self.install_with_dhcp(after)
+        self.assertEqual(job['state'],'failed')
+        self.assertEqual(job['reason'],'settings')
+        self.assertEqual(json.loads(self.versions.read_text())['app'],'1.3.1-r1')
+
+    def test_dns_migration_not_allowed_for_core_install(self):
+        after=json.loads(self.dhcp.read_text())
+        after['main'].update(notinterface=['vpn0','wt0'],nonwildcard='1')
+        job=self.install_with_dhcp(after,'xray')
+        self.assertEqual(job['state'],'failed')
+        self.assertEqual(job['reason'],'settings')
+
+    def test_dhcp_verifier_rejects_unrelated_changes_and_missing_netbird(self):
+        original=json.loads(self.dhcp.read_text())
+        original['second']={'.type':'dnsmasq','nonwildcard':'0','notinterface':'vpn1'}
+        self.dhcp.write_text(json.dumps(original))
+        snapshot=self.root/'snapshot.json'
+        def run(op):
+            return subprocess.run(['ucode',str(self.uc),op,str(snapshot),'app'],env=self.env,capture_output=True,text=True)
+        self.assertEqual(run('dhcp-snapshot').returncode,0)
+        migrated=json.loads(json.dumps(original))
+        for section in (migrated['main'],migrated['second']):
+            excluded=section['notinterface']
+            section.update(nonwildcard='1',notinterface=(excluded if isinstance(excluded,list) else [excluded])+['wt0'])
+        self.dhcp.write_text(json.dumps(migrated))
+        self.assertEqual(run('dhcp-verify').returncode,0)
+        for mutation in ('lan','server','exclude','new_section','deleted_section'):
+            data=json.loads(json.dumps(migrated))
+            if mutation=='lan':data['lan']['interface']='wan'
+            elif mutation=='server':data['main']['server']=['8.8.8.8']
+            elif mutation=='exclude':data['main']['notinterface']=['wt0']
+            elif mutation=='new_section':data['new']={'.type':'dhcp'}
+            else:del data['lan']
+            self.dhcp.write_text(json.dumps(data))
+            with self.subTest(mutation=mutation):self.assertNotEqual(run('dhcp-verify').returncode,0)
+        self.dhcp.write_text(json.dumps(migrated))
+        (self.bins/'netbird').unlink()
+        self.assertNotEqual(run('dhcp-verify').returncode,0)
+        # Semantically unchanged configuration does not need NetBird present.
+        self.dhcp.write_text(json.dumps(original,sort_keys=True,indent=2))
+        self.assertEqual(run('dhcp-verify').returncode,0)

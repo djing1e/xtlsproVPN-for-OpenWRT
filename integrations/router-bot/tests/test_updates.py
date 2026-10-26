@@ -80,6 +80,13 @@ class UpdateBotTests(unittest.TestCase):
         self.run_op('check')
         self.assertEqual(self.state(), 'unconfirmed')
 
+    def test_failed_settings_check_reports_reason_without_reinstall(self):
+        self.job.update(state='failed', reason='settings')
+        self.run_op('install')
+        self.assertEqual(self.state(), 'unconfirmed')
+        self.assertIn('Проверка сохранности настроек не пройдена.', str(self.messages()))
+        self.assertEqual(sum('update-install' in cmd for cmd, _ in self.calls), 1)
+
     def test_client_cannot_invoke_update_callbacks_or_transport(self):
         client = 123456
         self.store.change_access(UID, client, 'lab', True)

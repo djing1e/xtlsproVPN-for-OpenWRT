@@ -1216,7 +1216,13 @@ class Bot:
                 if job.get('state') in ('pending', 'running'):
                     continue
                 if job.get('state') != 'done':
-                    raise SafeError('Операция обновления не подтверждена. Проверьте версии и диагностику роутера; повторная установка автоматически не запускается.')
+                    reason = {'native': 'Установщик не подтвердил завершение.',
+                              'version': 'Не подтверждена выбранная версия.',
+                              'settings': 'Проверка сохранности настроек не пройдена.',
+                              'https': 'Проверка HTTPS через прокси не пройдена.',
+                              'dns_udp': 'Проверка DNS по UDP не пройдена.',
+                              'dns_tcp': 'Проверка DNS по TCP не пройдена.'}.get(job.get('reason'), '')
+                    raise SafeError('Операция обновления не подтверждена. ' + (reason + ' ' if reason else '') + 'Проверьте версии и диагностику роутера; повторная установка автоматически не запускается.')
                 if action == 'install':
                     status = self.router_call(uid, rid, 'xtlsbot-v1 status')
                     nb = self.router_call(uid, rid, 'xtlsbot-v1 admin-status')
