@@ -5,14 +5,14 @@ umask 077
 test -s /etc/xtls-router-bot/config.json
 work=$(mktemp -d /tmp/xtls-operator-install.XXXXXX)
 trap 'rm -rf "$work"' EXIT
-ref=79d0e1febd471c761b0094ec614b149ead9026bd
+ref=d3a552da9c7ce5cc0d8945017e4e7f580f514b2f
 base="https://raw.githubusercontent.com/djing1e/xtlsproVPN-for-OpenWRT/$ref/integrations/router-bot/server"
 for file in bot.py upgrade.py backup.py fleet.py connect.py operator_client.py operator_worker.py install-operator.py xtls-router-bot-operator.service xtls-router-bot-operator.path; do
     curl -fLsS --connect-timeout 10 --max-time 60 "$base/$file" -o "$work/$file"
 done
 cd "$work"
 sha256sum -c - <<'SUMS'
-2c283a5cb1597e991b33d8f000e508bb8a95e854d23acf68a3142c09f9835a90  bot.py
+c6eb50bed135eb980b4bf76d17058b526d7dff8d810d00bd7d08880d42ed6a51  bot.py
 9f634ba7307598a8e55738e8d94a544b2fe4a4985081962e78a2578b4fac3be7  upgrade.py
 5cd39e334a41dc609c4a4359926a408641e4d33fe4d5e27dd582c7304aebc90a  backup.py
 737b2aee94225a54b286bf015306ccde08bf7f4f3ea224f52390e8ca4432133c  fleet.py

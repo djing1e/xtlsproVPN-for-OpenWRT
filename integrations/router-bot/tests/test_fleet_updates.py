@@ -146,13 +146,41 @@ class FleetUpdates(unittest.TestCase):
         with patch.object(self.bot.pool,'submit') as submit:
             self.bot.handle(self.callback(cancel));self.bot.handle(self.callback(confirm,update_id=43))
             submit.assert_not_called()
-        self.assertEqual(self.store.fleet_get(UID)['state'],'done');self.assertFalse(self.calls)
+        self.assertEqual(self.store.fleet_get(UID)['state'],'done');self.assertFalse(self.installs())
     def test_confirmation_button_is_one_use_and_does_not_install_before_confirmation(self):
-        self.bot.fleet_prepare(UID,'lab');self.assertFalse(self.calls)
+        self.bot.fleet_prepare(UID,'lab');self.assertFalse(self.installs())
         buttons=[row for _,payload in self.tg.calls for row in payload.get('reply_markup',{}).get('inline_keyboard',[])]
         token=next(button['callback_data'] for row in buttons for button in row if button['text'].startswith('✅ Обновить'))
         with patch.object(self.bot.pool,'submit') as submit:
             self.bot.handle(self.callback(token));self.bot.handle(self.callback(token,update_id=43));self.assertEqual(submit.call_count,1)
+    def test_preview_excludes_current_and_offline_from_five_router_install_plan(self):
+        for rid,n in [('fourth',4),('fifth',5)]:
+            self.config['routers'][rid]={'name':rid,'host':'100.64.0.'+str(n),'port':22}
+            self.bot.locks[rid]=threading.Lock();self.versions[rid]='1.4.7-r1'
+        self.versions['other']=TARGET;self.flags['third']='offline'
+        self.bot.fleet_prepare(UID,'lab');self.batch=self.store.fleet_get(UID)['id']
+        text=self.messages()[-1]
+        for line in ('Всего в реестре: 5','К обновлению: 3','Уже актуальны: 1','Офлайн: 1'):self.assertIn(line,text)
+        self.assertTrue(all(cmd=='xtlsbot-v1 status' for _,cmd,_ in self.calls))
+        states=[i['state'] for i in self.store.fleet_get(UID)['items']]
+        self.assertEqual(states.count('queued'),3);self.assertEqual(states.count('current'),1);self.assertEqual(states.count('offline'),1)
+        result=self.run_batch()
+        self.assertEqual(len(self.installs()),3);self.assertEqual(result['state'],'done')
+        self.assertEqual(sum(i['state']=='updated' for i in result['items']),3)
+    def test_running_batch_cannot_trigger_another_preview_scan(self):
+        self.create();self.store.fleet_start(UID,self.batch)
+        with patch.object(self.bot,'latest_app_release') as latest:
+            self.bot.fleet_prepare(UID,'lab');latest.assert_not_called()
+        self.assertFalse(self.calls);self.assertEqual(self.store.fleet_get(UID)['id'],self.batch)
+    def test_preview_with_no_candidates_has_no_install_confirmation(self):
+        self.versions={rid:TARGET for rid in self.versions};self.bot.fleet_prepare(UID,'lab')
+        buttons=[button for _,payload in self.tg.calls for row in payload.get('reply_markup',{}).get('inline_keyboard',[]) for button in row]
+        self.assertFalse(any(x['text'].startswith('✅ Обновить') for x in buttons));self.assertIn('К обновлению: 0',self.messages()[-1])
+        self.assertFalse(self.installs())
+    def test_prepared_candidates_are_rechecked_before_install(self):
+        self.bot.fleet_prepare(UID,'lab');self.batch=self.store.fleet_get(UID)['id'];self.versions['lab']=TARGET
+        result=self.run_batch()
+        self.assertEqual(len(self.installs()),2);self.assertEqual(result['items'][0]['state'],'current')
     def test_report_failure_does_not_repeat_or_abort_successful_installs(self):
         self.create();self.bot.send=lambda *a,**kw:(_ for _ in ()).throw(b.SafeError('Telegram unavailable'))
         data=self.run_batch();self.assertEqual(data['state'],'done');self.assertEqual(len(self.installs()),3)
