@@ -10,11 +10,27 @@ b,UID=pilot.b,pilot.UID
 TARGET='1.4.8-r1'
 DIGEST='a'*64
 
+class FleetTelegram(pilot.TelegramFake):
+    def __init__(self):
+        super().__init__();self.live={};self.sequence=0
+    def call(self,method,**payload):
+        self.calls.append((method,dict(payload)))
+        if method=='sendMessage':
+            self.sequence+=1;self.live[self.sequence]=dict(payload)
+            return {'message_id':self.sequence}
+        if method=='editMessageText':
+            number=payload['message_id']
+            if number not in self.live:raise b.SafeError('Gone',400,'message_missing')
+            self.live[number]=dict(payload)
+            return {'message_id':number}
+        return {}
+
 class FleetUpdates(unittest.TestCase):
     callback=pilot.TelegramTests.callback
-    messages=pilot.TelegramTests.messages
+    def messages(self):return [v['text'] for _,v in sorted(self.tg.live.items())]
     def setUp(self):
         pilot.TelegramTests.setUp(self)
+        self.tg=FleetTelegram();self.bot.tg=self.tg
         self.config['routers']={rid:{'name':rid,'host':'100.64.0.'+str(n+1),'port':22,'rescue':{'host':'127.0.0.1','port':23000+n}} for n,rid in enumerate(('lab','other','third'))}
         self.bot.locks={rid:threading.Lock() for rid in self.config['routers']}
         self.versions={rid:'1.4.7-r1' for rid in self.config['routers']}
@@ -45,10 +61,13 @@ class FleetUpdates(unittest.TestCase):
     def tearDown(self):pilot.TelegramTests.tearDown(self)
     def create(self,routers=None):
         self.batch=self.store.fleet_create(UID,TARGET,DIGEST,[(rid,self.bot.fleet_identity(self.config['routers'][rid])) for rid in (routers or self.config['routers'])])
+        self.bot.fleet_report(UID,'lab',self.batch)
         return self.batch
     def run_batch(self,resume=False):
         self.store.fleet_start(UID,self.batch,resume)
         with patch.object(b.time,'sleep'):self.bot.fleet_worker(UID,'lab',self.batch,resume)
+        last=self.store.fleet_get(UID,self.batch)['message_updated']
+        with patch.object(b.time,'time',return_value=max(time.time(),last+4)):self.bot.fleet_progress_step()
         return self.store.fleet_get(UID,self.batch)
     def installs(self):return [c for c in self.calls if 'update-install' in c[1]]
     def test_all_routers_updated_one_at_a_time_and_verified(self):
@@ -182,7 +201,7 @@ class FleetUpdates(unittest.TestCase):
         result=self.run_batch()
         self.assertEqual(len(self.installs()),2);self.assertEqual(result['items'][0]['state'],'current')
     def test_report_failure_does_not_repeat_or_abort_successful_installs(self):
-        self.create();self.bot.send=lambda *a,**kw:(_ for _ in ()).throw(b.SafeError('Telegram unavailable'))
+        self.create();self.tg.call=lambda *a,**kw:(_ for _ in ()).throw(b.SafeError('Telegram unavailable'))
         data=self.run_batch();self.assertEqual(data['state'],'done');self.assertEqual(len(self.installs()),3)
 
 class OfficialRelease(unittest.TestCase):
