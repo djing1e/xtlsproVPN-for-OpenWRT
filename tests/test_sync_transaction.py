@@ -37,7 +37,7 @@ elif name=='ucode':
   else:Path(a[4]).write_text('12000\\n')
   Path(a[7]).write_text(json.dumps({'mode':'sequential' if sequential else 'independent','minimum_kb':32768 if sequential else 98304,'gomemlimit':'24MiB' if sequential else '64MiB'}))
  elif a[0].endswith('control.uc'):
-  current=state.read_text();fail=(scenario in ('live-health-fail','rollback-copy-fail','rollback-restart-fail','rollback-health-fail') and current=='new') or (scenario=='rollback-health-fail' and current=='old' and 'restart-old' in events.read_text())
+  current=state.read_text();fail=(scenario in ('live-health-fail','rollback-copy-fail','rollback-restart-fail','rollback-health-fail','direct-rollback') and current=='new') or (scenario=='direct-renew' and current=='old') or (scenario=='rollback-health-fail' and current=='old' and 'restart-old' in events.read_text())
   print(json.dumps({'proxy_ok':not fail} if a[1]=='health' else {'interception':{'active':True}}))
 elif name=='xray':
  if '-test' in a:
@@ -76,10 +76,12 @@ else:raise RuntimeError(name)
 '''
 class SyncTransaction(unittest.TestCase):
  def test_failures_preserve_or_restore_working_state(self):
-  for scenario in ('download-fail','config-fail','nft-fail','candidate-fail','candidate-dns-fail','restart-fail','live-health-fail','live-dns-fail','success','unchanged','rollback-copy-fail','rollback-restart-fail','rollback-health-fail','commit-before-fail','commit-after-fail','sequential-success','sequential-candidate-fail','sequential-dns-fail','low-memory','candidate-bad-extra','sequential-bad-extra','sequential-auto-first-fail','sequential-auto-first-dns-fail','sequential-auto-all-fail','sequential-manual-fail'):
+  for scenario in ('download-fail','config-fail','nft-fail','candidate-fail','candidate-dns-fail','restart-fail','live-health-fail','live-dns-fail','success','unchanged','rollback-copy-fail','rollback-restart-fail','rollback-health-fail','commit-before-fail','commit-after-fail','sequential-success','sequential-candidate-fail','sequential-dns-fail','low-memory','candidate-bad-extra','sequential-bad-extra','sequential-auto-first-fail','sequential-auto-first-dns-fail','sequential-auto-all-fail','sequential-manual-fail','direct-renew','direct-rollback'):
    with self.subTest(scenario=scenario),tempfile.TemporaryDirectory() as t:
     p=Path(t);tools=p/'tools';tools.mkdir();state=p/'catalogue';state.mkdir();run=p/'run';run.mkdir()
     (state/'subscription.json').write_text('old-catalogue');(state/'device-hwid-short').write_text('original-id');(p/'xray_core').write_text('old-core');(p/'service-state').write_text('old');(p/'events').write_text('');(p/'meminfo').write_text('MemAvailable: '+('10000' if scenario=='low-memory' else '49152' if scenario.startswith('sequential') else '200000')+' kB\n')
+    if scenario.startswith('direct-'):
+     (run/'direct-mode').touch();(run/'direct-mode.ready').touch()
     for name in ('uci','init','forkop-xray','ucode','xray','utpl','nft','curl','nslookup','jsonfilter','sleep','cp','sync','mv'):
      f=tools/name;f.write_text(MOCK);f.chmod(0o755)
     source=(ROOT/'usr/bin/xray-lab-sync-safe').read_text().replace('RUN=/var/run/xray-lab-control','RUN='+str(run)).replace('STATE=/etc/forkop-xray','STATE='+str(state)).replace('CORE=/etc/config/xray_core','CORE='+str(p/'xray_core')).replace('INIT=/etc/init.d/xray_core','INIT='+str(tools/'init')).replace('BIN=/usr/libexec/forkop-xray/xray','BIN='+str(tools/'xray')).replace('/etc/xtlsprovpn-last-apply-failure.log',str(p/'failure.log')).replace('/tmp/xtls-sync-safe.',str(p/'work.'))
@@ -90,9 +92,9 @@ class SyncTransaction(unittest.TestCase):
     command=p/'sync';command.write_text(source)
     env={**os.environ,'PATH':str(tools)+':'+os.environ['PATH'],'TEST_ROOT':str(p),'TEST_SCENARIO':scenario}
     r=subprocess.run(['sh',str(command)],env=env,capture_output=True,text=True,timeout=20)
-    success=scenario in ('success','unchanged','sequential-success','candidate-bad-extra','sequential-bad-extra','sequential-auto-first-fail','sequential-auto-first-dns-fail');self.assertEqual(r.returncode==0,success,r.stdout+r.stderr)
+    success=scenario in ('success','unchanged','sequential-success','candidate-bad-extra','sequential-bad-extra','sequential-auto-first-fail','sequential-auto-first-dns-fail','direct-renew');self.assertEqual(r.returncode==0,success,r.stdout+r.stderr)
     self.assertEqual((state/'subscription.json').read_text(),'new-catalogue' if success or scenario.startswith('commit-') else 'old-catalogue')
-    self.assertEqual((p/'xray_core').read_text(),'new-core' if scenario in ('success','sequential-success','candidate-bad-extra','sequential-bad-extra','sequential-auto-first-fail','sequential-auto-first-dns-fail','rollback-copy-fail','commit-before-fail','commit-after-fail') else 'old-core')
+    self.assertEqual((p/'xray_core').read_text(),'new-core' if scenario in ('success','sequential-success','candidate-bad-extra','sequential-bad-extra','sequential-auto-first-fail','sequential-auto-first-dns-fail','rollback-copy-fail','commit-before-fail','commit-after-fail','direct-renew') else 'old-core')
     self.assertEqual((state/'device-hwid-short').read_text(),'original-id')
     marker=run/'subscription-recovery'
     if scenario.startswith('rollback-'):
@@ -109,6 +111,8 @@ class SyncTransaction(unittest.TestCase):
      self.assertEqual(recovered.returncode,0,recovered.stderr)
      self.assertEqual((p/'xray_core').read_text(),'old-core' if scenario=='commit-before-fail' else 'new-core')
      self.assertEqual((state/'subscription.json').read_text(),'old-catalogue' if scenario=='commit-before-fail' else 'new-catalogue')
+    if scenario.startswith('direct-'):
+     self.assertTrue((run/'direct-mode').exists());self.assertTrue((run/'direct-mode.ready').exists())
     events=(p/'events').read_text()
     active=0
     for line in events.splitlines():

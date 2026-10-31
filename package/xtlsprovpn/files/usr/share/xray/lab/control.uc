@@ -55,13 +55,14 @@ case 'watch-step': {
     const busy=s.operation_busy || index(['pending','running'],s.job.state)>=0;
     let h=s.health, fresh=false;
     if (g.fx_watchdog_enabled=='1' && s.enabled && s.autostart && s.interface.up && s.core.running && !busy &&
-        (!before.probe_at || now-before.probe_at>=60 || before.probe_pid!=s.core.pid)) {
+        (!before.probe_at || now-before.probe_at>=(s.direct_mode || before.failures?15:60) || before.probe_pid!=s.core.pid)) {
+        if (before.probe_pid!=s.core.pid) before.successes=0;
         h=health_check(); fresh=true; before.probe_at=now; before.probe_pid=s.core.pid;
     }
     const old_recovery=before.last_recovery,old_outages=before.outages || 0;
     const r=decide(before,{now,enabled:g.fx_watchdog_enabled=='1',desired:s.enabled && s.autostart,
         interface_up:s.interface.up,signature:s.interface.signature,settle:max(1,int((int(g.fx_watch_delay || 2000)+999)/1000)),
-        busy,core:s.core.running,interception:s.interception.active,probe_new:fresh,
+        busy,bypass:s.direct_mode,cleanup_needed:s.direct_mode && !s.direct_ready,core:s.core.running,interception:s.interception.active,probe_new:fresh,
         proxy_ok:h?.proxy_ok===true,direct_ok:h?.direct_ok===true});
     if (r.state.last_recovery!=null && r.state.last_recovery!=old_recovery) r.state.recovery_at=time();
     if ((r.state.outages || 0)>old_outages) r.state.outage_at=time();

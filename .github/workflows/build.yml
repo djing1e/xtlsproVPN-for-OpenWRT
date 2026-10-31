@@ -2,7 +2,7 @@ name: xtlsproVPN ARM64 package (development)
 on:
   workflow_dispatch:
   push:
-    branches: ['main', 'fix/safe-subscription-apply', 'feature/netbird-admin', 'feature/package-ui', 'feature/low-memory-sync', 'feature/router-admin-updates', 'feature/netbird-recovery', 'feature/router-bot', 'feature/wrapper-guard', 'release/v1.4.7', 'fix/source-interface-auto']
+    branches: ['main', 'fix/safe-subscription-apply', 'feature/netbird-admin', 'feature/package-ui', 'feature/low-memory-sync', 'feature/router-admin-updates', 'feature/netbird-recovery', 'feature/router-bot', 'feature/wrapper-guard', 'release/v1.4.8', 'fix/source-interface-auto']
     tags: ['v1.0.0*']
     paths-ignore:
       - 'README.md'
@@ -59,9 +59,12 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_release_v145.py'
           python3 -m unittest discover -s tests -p 'test_release_v146.py'
           python3 -m unittest discover -s tests -p 'test_release_v147.py'
+          python3 -m unittest discover -s tests -p 'test_release_v148.py'
+          python3 -m unittest discover -s tests -p 'test_failopen.py'
           python3 -m unittest discover -s tests -p 'test_zram.py'
           node tests/test_zram_ui.js
           node tests/test_settings_menu_ui.js
+          node tests/test_dashboard_jobs.js
           python3 -m unittest discover -s tests -p 'test_source_interfaces.py'
           python3 -m unittest discover -s tests -p 'test_dns_probe.py'
           python3 -m unittest discover -s tests -p 'test_sync_plan.py'
@@ -101,16 +104,16 @@ jobs:
       - name: Build APK with official OpenWrt SDK
         run: |
           bash scripts/build-sdk.sh
-          python3 scripts/make-update-manifest.py dist/xtlsprovpn-1.4.7-r1.apk --output dist/update.json
-          python3 scripts/package-router-bot.py --output dist/xtls-router-bot-1.4.7.tar.gz
-          (cd dist && sha256sum ./xtlsprovpn-1.4.7-r1.apk ./xtls-router-bot-1.4.7.tar.gz > SHA256SUMS)
+          python3 scripts/make-update-manifest.py dist/xtlsprovpn-1.4.8-r1.apk --output dist/update.json
+          python3 scripts/package-router-bot.py --output dist/xtls-router-bot-1.4.8.tar.gz
+          (cd dist && sha256sum ./xtlsprovpn-1.4.8-r1.apk ./xtls-router-bot-1.4.8.tar.gz > SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
-          name: xtlsprovpn-1.4.7-openwrt-25.12.5-arm64
+          name: xtlsprovpn-1.4.8-openwrt-25.12.5-arm64
           path: dist/*
           if-no-files-found: error
 
-  publish-v147:
+  publish-v148:
     needs: [netbird-checks, build]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-24.04
@@ -118,7 +121,7 @@ jobs:
     permissions:
       contents: write
     concurrency:
-      group: publish-v147
+      group: publish-v148
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
@@ -126,9 +129,9 @@ jobs:
           fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
-          name: xtlsprovpn-1.4.7-openwrt-25.12.5-arm64
+          name: xtlsprovpn-1.4.8-openwrt-25.12.5-arm64
           path: dist
-      - name: Verify source-bound artifacts and publish v1.4.7
+      - name: Verify source-bound artifacts and publish v1.4.8
         env:
           GH_TOKEN: ${{ github.token }}
-        run: bash scripts/publish-v147.sh
+        run: bash scripts/publish-v148.sh

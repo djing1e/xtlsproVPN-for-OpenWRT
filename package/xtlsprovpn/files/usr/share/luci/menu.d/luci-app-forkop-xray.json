@@ -19,7 +19,7 @@
     "order": 0,
     "action": {
       "type": "view",
-      "path": "xray/dashboard_052"
+      "path": "xray/dashboard_148"
     }
   },
   "admin/services/forkop-xray/settings": {
@@ -35,7 +35,7 @@
     "order": 2,
     "action": {
       "type": "view",
-      "path": "xray/diagnostics_updates2"
+      "path": "xray/diagnostics_148"
     }
   },
   "admin/services/forkop-xray/monitoring": {
@@ -43,7 +43,7 @@
     "order": 3,
     "action": {
       "type": "view",
-      "path": "xray/monitoring_compact_052"
+      "path": "xray/monitoring_148"
     }
   },
   "admin/services/forkop-xray/app-update": {
