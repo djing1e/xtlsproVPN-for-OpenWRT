@@ -1423,19 +1423,55 @@ class Bot:
         except Exception:
             raise SafeError('Не удалось проверить стабильный релиз официального репозитория. Установки не запускались.') from None
 
+    def fleet_classify(self, status, target):
+        current=self.app_version(status.get('version'))
+        if current and current>=self.app_version(target):return 'current',''
+        if not current:return 'skipped','version'
+        if status.get('operation_busy') or status.get('job',{}).get('state') in ('pending','running'):
+            return 'skipped','busy'
+        if status.get('running') is not True or status.get('enabled') is not True:return 'skipped','stopped'
+        checked=status.get('health_checked')
+        if status.get('proxy_ok') is not True or type(checked) not in (int,float) or not 0<=time.time()-checked<=90:
+            return 'skipped','unhealthy'
+        return 'queued',''
+
+    def fleet_preview(self, uid, rid, target):
+        if rid not in self.locks or not self.locks[rid].acquire(blocking=False):return 'skipped','busy'
+        try:
+            status=self.router_call(uid,rid,'xtlsbot-v1 status',transport='netbird')
+            return self.fleet_classify(status,target)
+        except SafeError:return 'offline',''
+        except Exception:return 'skipped','check'
+        finally:self.locks[rid].release()
+
     def fleet_prepare(self, uid, rid):
         try:
             self.admin(uid)
+            active=self.store.fleet_get(uid)
+            if active and active['state'] in ('running','paused'):
+                self.fleet_report(uid,rid,active['id']);return
             version,digest=self.latest_app_release(force=True)
             order=[rid]+sorted(r for r in self.config['routers'] if r!=rid)
             routers=[(r,self.fleet_identity(self.config['routers'][r])) for r in order]
+            preview={r:self.fleet_preview(uid,r,version) for r in order}
             batch=self.store.fleet_create(uid,version,digest,routers)
-            self.send(uid,'Массовое обновление APK xtlsproVPN\nВерсия: '+version+'\nРоутеров в плане: '+str(len(routers))+
-                      '\nПриоритет первой проверки: '+self.router_name(rid)+'.\nОбновляем по одному; сначала проверяем первый подходящий роутер. Уже актуальные, занятые, отключённые и недоступные устройства учитываются отдельно.'+
-                      '\nПеред установкой проверяем HTTPS, NetBird и аварийный SSH. После — версию и штатные проверки настроек, HTTPS и DNS. Ошибка установки приостанавливает очередь; автоматических повторов нет.'+
-                      '\nXray, NetBird и прошивка OpenWrt не обновляются. План действует 2 минуты.',
-                      [[self.button(uid,rid,'✅ Обновить до '+version,'fleet_confirm',batch)],
-                       [self.button(uid,rid,'Отмена','fleet_cancel',batch)]])
+            for r,(state,reason) in preview.items():self.store.fleet_item(batch,r,state,reason)
+            counts={state:sum(value[0]==state for value in preview.values()) for state in ('queued','current','offline','skipped')}
+            candidates=[r for r in order if preview[r][0]=='queued']
+            text=('Массовое обновление APK xtlsproVPN\nВерсия: '+version+
+                  '\nВсего в реестре: '+str(len(routers))+'\nК обновлению: '+str(counts['queued'])+
+                  '\nУже актуальны: '+str(counts['current'])+'\nОфлайн: '+str(counts['offline'])+
+                  '\nПропущены по условиям проверки: '+str(counts['skipped']))
+            rows=[]
+            if candidates:
+                text+='\nПервым проверим: '+self.router_name(candidates[0])+'.'
+                text+='\nОбновляем по одному. Доступность и версию повторно проверяем перед каждой установкой.'
+                text+='\nПроверяем HTTPS, NetBird и аварийный SSH. После установки — версию и штатные проверки настроек, HTTPS и DNS. Ошибка установки приостанавливает очередь; автоматических повторов нет.'
+                rows.append([self.button(uid,rid,'✅ Обновить '+str(len(candidates))+' до '+version,'fleet_confirm',batch)])
+            else:text+='\nСейчас нет доступных устройств, готовых к обновлению.'
+            text+='\nXray, NetBird и прошивка OpenWrt не обновляются. План действует 2 минуты.'
+            rows.append([self.button(uid,rid,'Отмена','fleet_cancel',batch)])
+            self.send(uid,text,rows)
         except SafeError as error: self.inform(uid,str(error))
         except Exception:
             LOG.error('fleet preparation failed')
@@ -1547,15 +1583,9 @@ class Bot:
             try:status=self.router_call(uid,rid,'xtlsbot-v1 status',transport='netbird')
             except SafeError:
                 self.store.fleet_item(batch,rid,'offline');return True
-            current=self.app_version(status.get('version'))
-            if current and current>=self.app_version(data['version']):
-                self.store.fleet_item(batch,rid,'current');return True
-            if status.get('operation_busy') or status.get('job',{}).get('state') in ('pending','running'):
-                self.store.fleet_item(batch,rid,'skipped','busy');return True
-            if status.get('running') is not True or status.get('enabled') is not True:
-                self.store.fleet_item(batch,rid,'skipped','stopped');return True
-            if status.get('proxy_ok') is not True or not isinstance(status.get('health_checked'),(int,float)) or not 0<=time.time()-status['health_checked']<=90:
-                self.store.fleet_item(batch,rid,'skipped','unhealthy');return True
+            state,reason=self.fleet_classify(status,data['version'])
+            if state!='queued':
+                self.store.fleet_item(batch,rid,state,reason);return True
             check=str(uuid.uuid4())
             receipt=self.router_call(uid,rid,'xtlsbot-v1 update-check app '+check)
             if receipt.get('accepted') is not True or receipt.get('id')!=check or receipt.get('component')!='app' or receipt.get('action')!='check':

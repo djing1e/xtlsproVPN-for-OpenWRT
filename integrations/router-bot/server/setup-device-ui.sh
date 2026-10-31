@@ -19,7 +19,7 @@ for file in bot.py upgrade.py; do
 done
 cd "$work"
 sha256sum -c - <<'SUMS'
-2c283a5cb1597e991b33d8f000e508bb8a95e854d23acf68a3142c09f9835a90  bot.py
+c6eb50bed135eb980b4bf76d17058b526d7dff8d810d00bd7d08880d42ed6a51  bot.py
 9f634ba7307598a8e55738e8d94a544b2fe4a4985081962e78a2578b4fac3be7  upgrade.py
 SUMS
 # Do not stop the bot during a queued privileged operator operation.
