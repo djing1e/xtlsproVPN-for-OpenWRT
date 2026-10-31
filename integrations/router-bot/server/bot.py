@@ -1522,10 +1522,13 @@ class Bot:
         if rid not in self.locks or not self.locks[rid].acquire(blocking=False):return False
         try:
             if json.loads(item['identity'])!=self.fleet_identity(self.config['routers'][rid]):return False
-            result=self.router_call(uid,rid,'xtlsbot-v1 updates',transport='rescue')
+            result=self.router_call(uid,rid,'xtlsbot-v1 updates')
             job=result.get('job',{})
             if job.get('id')!=item['request'] or job.get('component')!='app' or job.get('action')!='install':return False
             if job.get('state') in ('pending','running'):return False
+            # The 30-minute rescue lease may have expired during a bot restart.
+            # Reopen the channel, never resend the installation request.
+            self.prepare_rescue(uid,rid,quiet=True)
             verified=self.fleet_verify(uid,rid,data['version'],item['started'] or 0)
             self.store.fleet_item(data['id'],rid,'updated' if verified and job.get('state')=='done' else 'failed','' if verified and job.get('state')=='done' else 'install')
             self.store.finish(-(1_000_000_000_000+item['seq']),'done' if verified and job.get('state')=='done' else 'unconfirmed')

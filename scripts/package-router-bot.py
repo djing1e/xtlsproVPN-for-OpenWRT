@@ -14,7 +14,7 @@ SERVER = ('backup.py', 'bot.py', 'connect.py', 'enroll_rescue.py', 'fleet.py', '
           'install-daily-backup.py', 'install-operator.py', 'install.py', 'operator_client.py',
           'operator_worker.py', 'upgrade.py', 'upgrade-release.sh', 'xtls-router-add',
           'xtls-router-bot-operator.path', 'xtls-router-bot-operator.service', 'xtls-router-bot.service',
-          'setup-connect.sh', 'setup-operator.sh', 'setup-catalog.sh', 'setup-daily-backup.sh', 'setup-backup-password.sh', 'setup-device-ui.sh', 'setup-rich-presence.sh')
+          'setup-connect.sh', 'setup-operator.sh', 'setup-catalog.sh', 'setup-daily-backup.sh', 'setup-backup-password.sh', 'setup-device-ui.sh', 'setup-rich-presence.sh', 'setup-fleet-updates.sh')
 
 
 def package(output, root=ROOT):

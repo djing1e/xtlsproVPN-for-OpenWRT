@@ -12,14 +12,14 @@ test -s /etc/xtls-router-bot/config.json
 test -s /opt/xtls-router-bot/backup.py
 work=$(mktemp -d /tmp/xtls-rich-presence-install.XXXXXX)
 trap 'rm -rf "$work"' EXIT
-ref=2aa3f1802a5d459f495ffb09ecc8c50f4e14c2da
+ref=7cf552c90d61ca51a0ff457cb11f9bf0346c674a
 base="https://raw.githubusercontent.com/djing1e/xtlsproVPN-for-OpenWRT/$ref/integrations/router-bot/server"
 for file in bot.py upgrade.py; do
     curl -fLsS --connect-timeout 10 --max-time 60 "$base/$file" -o "$work/$file"
 done
 cd "$work"
 sha256sum -c - <<'SUMS'
-5cf9e54476b3c3cf15a0f0599c662b0f92faae4212777e63dc2b4534b28ffa30  bot.py
+2957938d91608efa15d39914e6fa525d792e8261b8e535da8d53016a11660bbe  bot.py
 9f634ba7307598a8e55738e8d94a544b2fe4a4985081962e78a2578b4fac3be7  upgrade.py
 SUMS
 # Do not stop the bot during a queued privileged operator operation.
