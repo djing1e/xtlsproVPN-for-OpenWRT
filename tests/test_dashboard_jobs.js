@@ -1,6 +1,6 @@
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
-const source=fs.readFileSync('package/xtlsprovpn/files/www/luci-static/resources/view/xray/lab_052.js','utf8');
+const source=fs.readFileSync('package/xtlsprovpn/files/www/luci-static/resources/view/xray/lab_148.js','utf8');
 function E(tag,attrs={},children=[]) {
     return {tag,attrs,children:Array.isArray(children)?children:[children],isConnected:false,
         appendChild(n){this.children.push(n);n.parent=this;n.isConnected=true;},
@@ -12,6 +12,9 @@ async function main(){
     const rpc={declare:spec=>spec.method==='action'?async()=>response:async()=>data};
     const lab=new Function('baseclass','rpc','ui','E','document','setTimeout',source)(
         {extend:x=>x},rpc,{},E,{body},()=>0);
+    assert.equal(lab.reason('direct_mode'),'Прямой интернет — ожидаем восстановления прокси');
+    assert.equal(lab.reason('recover'),'Восстановление прокси');
+    assert(lab.jobNote({job:{state:'running',action:'bypass'}}).children[0].includes('Переход на прямой интернет'));
     data={job:{id:'one',state:'failed',action:'sync',message:'Недостаточно RAM'},operation_busy:false};
     await lab.request('sync','','',{});assert.equal(lab.busy(data),false);
     assert(body.children[0].children.some(n=>JSON.stringify(n.children.map(x=>x.tag==='div'?x.children.map(y=>y.children):[])).includes('Недостаточно RAM')));

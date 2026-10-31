@@ -10,7 +10,7 @@ status|job|diagnostics|logs) exec ucode "$UC" "$1" ;;
 launch)
     op=${2:-}
     location=${3:-}
-    case "$op" in start|stop|restart|sync|select|latency|diagnose|recover) ;; *) echo '{"error":"Unknown action"}'; exit 1 ;; esac
+    case "$op" in start|stop|restart|sync|select|latency|diagnose|recover|bypass|restore) ;; *) echo '{"error":"Unknown action"}'; exit 1 ;; esac
     if [ "$op" = select ]; then
         case "$location" in auto|cfg??????) ;; *) echo '{"error":"Invalid location"}'; exit 1 ;; esac
         case "$location" in *[!a-zA-Z0-9_-]*) exit 1 ;; esac
@@ -50,6 +50,23 @@ worker)
         [ "$(jsonfilter -i "$RUN/action-health.json" -e '@.proxy_ok')" = true ]
     }
     case "$op" in
+    bypass)
+        [ "$(uci -q get xray_core.general.transparent_proxy_enable || :)" = 1 ] || exit 0
+        /etc/init.d/xray_core suspend_proxy 8>&- 9>&-
+        ;;
+    restore)
+        [ -f "$RUN/direct-mode" ] || exit 0
+        [ "$(uci -q get xray_core.general.transparent_proxy_enable || :)" = 1 ] || exit 0
+        # Preserve bypass on every preflight error. Never enable a tunnel from a stale sample.
+        require_health
+        ucode /usr/share/xray/lab/dns_query.uc 5300 ipv4 udp
+        ucode /usr/share/xray/lab/dns_query.uc 5300 ipv4 tcp
+        /etc/init.d/xray_core resume_proxy 8>&- 9>&-
+        if ! require_health; then
+            /etc/init.d/xray_core suspend_proxy 8>&- 9>&- || :
+            exit 1
+        fi
+        ;;
     start) /usr/bin/xray-lab start; require_health ;;
     stop) /usr/bin/xray-lab stop ;;
     restart) /usr/bin/xray-lab stop; /usr/bin/xray-lab start; require_health ;;
@@ -109,6 +126,9 @@ worker)
 watch-loop)
     while :; do
         action=$(ucode "$UC" watch-step 2>/dev/null || :)
+        case "$action" in bypass|restore)
+            "$0" launch "$action" >/dev/null 2>&1 || :
+            ;; esac
         if [ "$action" = restart ]; then
             logger -t xray-lab-watchdog 'Recovering native Xray after a confirmed interface or tunnel failure'
             "$0" launch recover >/dev/null 2>&1 || :

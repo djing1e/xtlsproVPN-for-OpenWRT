@@ -25,6 +25,32 @@ if(ARGV[0]=='patch-netbird'){
     }
     if(!fs.writefile(ARGV[2],source))fail('state_failed');exit(0);
 }
+// Compare DHCP semantics, allowing only the NetBird listener migration.
+// Do not exempt the whole file: upstream DNS, leases and LAN settings stay protected.
+function canonical(v){
+    if(type(v)=='array')return '['+join(',',map(v,canonical))+']';
+    if(type(v)=='object')return '{'+join(',',map(sort(keys(v)),k=>sprintf('%J',k)+':'+canonical(v[k])))+'}';
+    return sprintf('%J',v);
+}
+if(ARGV[0]=='dhcp-snapshot' || ARGV[0]=='dhcp-verify'){
+    let c=require('uci').cursor();
+    if(!c.load('dhcp'))fail('dhcp_unreadable');
+    let current=c.get_all('dhcp');
+    if(type(current)!='object')fail('dhcp_unreadable');
+    if(ARGV[0]=='dhcp-snapshot'){save(ARGV[1],current);exit(0);}
+    let before=load(ARGV[1]);if(type(before)!='object')fail('dhcp_snapshot_missing');
+    if(canonical(before)==canonical(current))exit(0);
+    if(ARGV[2]!='app' || !fs.access('/usr/bin/netbird','x'))fail('settings_changed');
+    for(let name,section in before){
+        if(section['.type']!='dnsmasq')continue;
+        let excluded=section.notinterface;
+        excluded=type(excluded)=='array'?excluded:excluded==null?[]:[excluded];
+        if(index(excluded,'wt0')<0)section.notinterface=[...excluded,'wt0'];
+        section.nonwildcard='1';
+    }
+    if(canonical(before)!=canonical(current))fail('settings_changed');
+    print('DHCP: NetBird DNS listener migration verified\n');exit(0);
+}
 let boot=trim(fs.readfile('/proc/sys/kernel/random/boot_id') || ''), op=ARGV[0],c=ARGV[1],id=ARGV[2];
 let job=load(RUN+'/job.json');if(job?.boot_id!=boot)job=null;
 function public_plan(p){return p?{id:p.id,component:p.component,installed:p.installed,available:p.available,
@@ -39,6 +65,7 @@ if(op=='set'){
     if(index(['check','install'],action)<0 || index(['pending','running','done','failed'],state)<0)fail('invalid_request');
     if(state!='pending' && (job?.id!=id || job?.component!=c || job?.action!=action))fail('job_replaced');
     let d={id,component:c,action,state,boot_id:boot,started:job?.id==id?job.started:time(),updated:time()};
+    if(state=='failed' && match(ARGV[5] || '',/^[a-z_]{1,40}$/))d.reason=ARGV[5];
     save(RUN+'/job.json',d);exit(0);
 }
 if(op=='plan'){

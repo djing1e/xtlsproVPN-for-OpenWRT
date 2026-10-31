@@ -3,7 +3,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]/'package/xtlsprovpn/files'
 class Health(unittest.TestCase):
  def test_false_json_is_a_failed_action(self):
-  source=(ROOT/'usr/bin/xray-lab-control').read_text();fn=source[source.index('    require_health()'):source.index('    case "$op" in\n    start)')]
+  source=(ROOT/'usr/bin/xray-lab-control').read_text();fn=source[source.index('    require_health()'):source.index('    case "$op" in',source.index('    require_health()'))]
   for value in ('true','false'):
    with self.subTest(value=value),tempfile.TemporaryDirectory() as t:
     p=Path(t)
