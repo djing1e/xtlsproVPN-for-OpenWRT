@@ -12,8 +12,8 @@ for file in bot.py upgrade.py backup.py fleet.py connect.py operator_client.py o
 done
 cd "$work"
 sha256sum -c - <<'SUMS'
-d7362fa63ba09e533e12c9d2e11c975d68602e3d92c8d001945d17d329d22bed  bot.py
-fce4f03e7ae08dae4638d23bf76757f19cb106d03d73151024857b75e50d5781  upgrade.py
+5cf9e54476b3c3cf15a0f0599c662b0f92faae4212777e63dc2b4534b28ffa30  bot.py
+9f634ba7307598a8e55738e8d94a544b2fe4a4985081962e78a2578b4fac3be7  upgrade.py
 5cd39e334a41dc609c4a4359926a408641e4d33fe4d5e27dd582c7304aebc90a  backup.py
 737b2aee94225a54b286bf015306ccde08bf7f4f3ea224f52390e8ca4432133c  fleet.py
 5a0a6cd62925cbae12bec44b5e8bf1f84e2d254b82b08d8858f9a785de4ebeff  connect.py

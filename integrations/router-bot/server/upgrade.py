@@ -28,7 +28,10 @@ def digest(path):
 
 def running_operations(database):
     with sqlite3.connect('file:' + str(database) + '?mode=ro', uri=True) as db:
-        return db.execute("SELECT count(*) FROM operations WHERE state='running'").fetchone()[0]
+        count=db.execute("SELECT count(*) FROM operations WHERE state='running'").fetchone()[0]
+        if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='fleet_updates'").fetchone():
+            count+=db.execute("SELECT count(*) FROM fleet_updates WHERE state='running'").fetchone()[0]
+        return count
 
 
 def atomic_app(source):
