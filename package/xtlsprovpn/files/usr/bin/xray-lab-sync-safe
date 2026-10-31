@@ -28,6 +28,8 @@ COMMITTED=0
 KEEP_WORK=0
 PROBE_PID=
 WAS_RUNNING=0
+WAS_DIRECT=0
+[ ! -f "$RUN/direct-mode" ] || WAS_DIRECT=1
 WAS_ENABLED=$(uci -q get xray_core.general.transparent_proxy_enable || :)
 "$INIT" running >/dev/null 2>&1 && WAS_RUNNING=1
 mkdir -p "$WORK/staged" "$WORK/fetch" "$WORK/previous" "$WORK/config" "$RUN"
@@ -50,12 +52,24 @@ stop_probe() {
 healthy() {
     ucode "$LIB/lab/control.uc" health > "$WORK/health.json" || return 1
     [ "$(jsonfilter -i "$WORK/health.json" -e '@.proxy_ok')" = true ] || return 1
-    if [ "$WAS_ENABLED" = 1 ];then
+    if [ "$WAS_DIRECT" = 1 ];then
+        # Validate the candidate locally; watchdog alone may re-enable LAN after recovery.
+        ucode "$LIB/lab/dns_query.uc" 5300 ipv4 udp || return 1
+        ucode "$LIB/lab/dns_query.uc" 5300 ipv4 tcp || return 1
+    elif [ "$WAS_ENABLED" = 1 ];then
         nslookup -type=A -timeout=3 -retry=1 openwrt.org 127.0.0.1 > "$WORK/live-dns" 2>&1 || return 1
         grep -q '^Name:' "$WORK/live-dns" || return 1
         ucode "$LIB/lab/control.uc" status > "$WORK/status.json" || return 1
         [ "$(jsonfilter -i "$WORK/status.json" -e '@.interception.active')" = true ] || return 1
     fi
+}
+rollback_healthy() {
+    if [ "$WAS_DIRECT" = 1 ];then
+        cmp -s "$WORK/previous-core" "$CORE" || return 1
+        [ -f "$RUN/direct-mode" ] && [ -f "$RUN/direct-mode.ready" ] || return 1
+        nslookup -type=A -timeout=3 -retry=1 openwrt.org 127.0.0.1 > "$WORK/rollback-direct-dns" 2>&1 || return 1
+        grep -q '^Name:' "$WORK/rollback-direct-dns"
+    else healthy; fi
 }
 finish() {
     rc=$?
@@ -93,14 +107,16 @@ finish() {
             if [ "$restore_failed" = 0 ];then
                 if [ "$WAS_RUNNING" = 1 ];then
                     if "$INIT" restart 7>&- 8>&- 9>&-;then
-                        for attempt in 1 2 3 4 5;do sleep 2; if healthy;then restored=1;break;fi;done
+                        for attempt in 1 2 3 4 5;do sleep 2; if rollback_healthy;then restored=1;break;fi;done
                     fi
                 else
                     restored=1
                 fi
             fi
             if [ "$restored" = 1 ];then
-                if [ "$WAS_RUNNING" = 1 ];then
+                if [ "$WAS_DIRECT" = 1 ];then
+                    echo 'Previous configuration restored; direct mode retained.'
+                elif [ "$WAS_RUNNING" = 1 ];then
                     echo 'Previous configuration restored; HTTPS and DNS verified.'
                 else
                     echo 'Previous configuration restored; proxy remains stopped.'
@@ -220,7 +236,7 @@ if [ "$unchanged" != 1 ];then
         probe_dns || { echo 'Candidate active DNS failed; live state retained.';exit 1; }
     fi
     stop_probe
-    if [ "$WAS_RUNNING" = 1 ];then
+    if [ "$WAS_RUNNING" = 1 ] && [ "$WAS_DIRECT" != 1 ];then
         healthy || { echo 'Existing connection is not healthy; applying changes is cancelled.';exit 1; }
     fi
     ucode - "$WORK/config" "$WAS_ENABLED" <<'UC'

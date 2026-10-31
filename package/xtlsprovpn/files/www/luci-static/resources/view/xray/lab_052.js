@@ -7,6 +7,8 @@ const methods = {};
 ['status','diagnostics','logs','job'].forEach(method => methods[method] = rpc.declare({object:'xray_lab',method,expect:{}}));
 const action = rpc.declare({object:'xray_lab',method:'action',params:['action','location'],expect:{}});
 const reasons = {
+    direct_mode:'Прямой интернет — ожидаем восстановления прокси',direct_cleanup:'Восстанавливаем прямой интернет и DNS',
+    proxy_recovered:'Прокси снова доступен — проверяем перед включением',
     healthy:'Проверки проходят',paused:'Приостановлен',interface_down:'Интерфейс выключен — ожидаем сеть',
     settling:'Ожидаем стабилизацию интерфейса',operation_running:'Операция выполняется',
     confirming_failure:'Подтверждаем сбой',uplink_unavailable:'Нет прямой доступности — ожидаем сеть / DNS',
@@ -15,8 +17,8 @@ const reasons = {
     proxy_failed:'Восстановление после ошибок прокси',not_started:'Монитор ещё не запущен'
 };
 
-const operationNames={start:'Запуск прокси',stop:'Остановка прокси',restart:'Перезапуск прокси',sync:'Обновление подписки',select:'Выбор локации',latency:'Измерение задержек',diagnose:'Диагностика',recover:'Восстановление прокси'};
-const completedNames={start:'Прокси запущен',stop:'Прокси остановлен',restart:'Прокси перезапущен',sync:'Подписка обновлена',select:'Локация применена',latency:'Замеры задержек завершены',diagnose:'Диагностика завершена',recover:'Прокси восстановлен'};
+const operationNames={start:'Запуск прокси',stop:'Остановка прокси',restart:'Перезапуск прокси',sync:'Обновление подписки',select:'Выбор локации',latency:'Измерение задержек',diagnose:'Диагностика',recover:'Восстановление прокси',bypass:'Переход на прямой интернет',restore:'Возврат прокси'};
+const completedNames={start:'Прокси запущен',stop:'Прокси остановлен',restart:'Прокси перезапущен',sync:'Подписка обновлена',select:'Локация применена',latency:'Замеры задержек завершены',diagnose:'Диагностика завершена',recover:'Прокси восстановлен',bypass:'Включён прямой интернет',restore:'Прокси восстановлен'};
 let toastRoot, activeNotice, pending=false;
 function toast(title,detail,tone,persistent) {
     if(!toastRoot || !toastRoot.isConnected){toastRoot=E('div',{'class':'fx-toasts','aria-live':'polite'});document.body.appendChild(toastRoot);}

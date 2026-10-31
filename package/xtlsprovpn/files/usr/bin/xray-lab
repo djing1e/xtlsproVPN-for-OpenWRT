@@ -111,6 +111,7 @@ start)
         echo 'Native DNS check failed. LAN and system DNS were not enabled.'
         exit 1
     fi
+    rm -f /var/run/xray-lab-control/direct-mode /var/run/xray-lab-control/direct-mode.ready
     uci set xray_core.general.transparent_proxy_enable=1
     uci commit xray_core
     /etc/init.d/xray_core restart 8>&- 9>&-
@@ -139,6 +140,7 @@ stop)
     uci set xray_core.general.transparent_proxy_enable=0 || stop_rc=1
     uci set xray_core.general.fx_start_authorized=0 || stop_rc=1
     uci commit xray_core || stop_rc=1
+    rm -f /var/run/xray-lab-control/direct-mode /var/run/xray-lab-control/direct-mode.ready
     /etc/init.d/xray_core disable 8>&- 9>&- || stop_rc=1
     /etc/init.d/xray_core stop 8>&- 9>&- || stop_rc=1
     if /etc/init.d/xray_core running >/dev/null 2>&1; then stop_rc=1; fi

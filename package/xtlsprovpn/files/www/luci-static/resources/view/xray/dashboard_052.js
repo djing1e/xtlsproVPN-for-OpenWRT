@@ -27,8 +27,8 @@ return view.extend({
                 lab.card('LAN через xtlsproVPN',lab.bytes((traffic.lan_upload || 0)+(traffic.lan_download || 0)),
                     'Байты на TPROXY-входах с запуска ядра'),
                 lab.card('RAM xtlsproVPN',lab.bytes(s.core.rss),'Свободно системе: '+lab.bytes(s.memory.available)),
-                lab.card('Соединение',connection?'Проверка пройдена':!s.core.running?'Остановлено':'Нужна проверка',
-                    health?'HTTPS через SOCKS: '+(health.proxy_ok?'OK':'ошибка')+' · '+lab.when(health.checked):'Запустите диагностику',connection?'ok':'warn')
+                lab.card('Соединение',s.direct_mode?'Прямой интернет':connection?'Проверка пройдена':!s.core.running?'Остановлено':'Нужна проверка',
+                    s.direct_mode?'Перехват LAN отключён; прокси проверяется в фоне':health?'HTTPS через SOCKS: '+(health.proxy_ok?'OK':'ошибка')+' · '+lab.when(health.checked):'Запустите диагностику',connection?'ok':'warn')
             ]);
             const facts=items=>E('dl',{'class':'fx-facts'},items.flatMap(item=>[E('dt',{},item[0]),E('dd',{},item[1])]));
             const sub=s.subscription || {}, usage=sub.traffic;
@@ -37,7 +37,7 @@ return view.extend({
             if(usage) quota=lab.bytes(usage.used)+(usage.total?' / '+lab.bytes(usage.total):usage.unlimited?' / безлимит':' / лимит не указан');
             const service=E('div',{'class':'fx-service-grid'},[
                 E('div',{'class':'fx-card'},[E('h4',{},'Сервисы'),facts([
-                    ['xtlsproVPN',s.core.running?'Работает':'Остановлен'],
+                    ['xtlsproVPN',s.direct_mode?'Прямой режим':s.core.running?'Работает':'Остановлен'],
                     ['Перехват LAN',s.enabled && s.interception.active?'Установлен':'Не активен'],
                     ['Шлюз / DNS',s.lan.address],['Watchdog',lab.reason(s.watchdog.reason)]
                 ])]),
@@ -57,7 +57,7 @@ return view.extend({
                 ]),lab.jobNote(s),
                 E('div',{'class':'fx-card'},[E('h4',{},'main · '+nodes.length+' локаций'),
                     E('div',{'class':'fx-grid fx-nodes'},[auto,...nodes.map(nodeCard)])]),
-                E('p',{'class':'fx-muted'},'Текущий профиль: внешний IPv4 TCP/UDP через прокси; локальные сети напрямую. IPv6 не проксируется.')];
+                E('p',{'class':'fx-muted'},s.direct_mode?'Прямой интернет. Автоматический возврат после успешных проверок HTTPS и DNS.':'Текущий профиль: внешний IPv4 TCP/UDP через прокси; локальные сети напрямую. IPv6 не проксируется.')];
             body.replaceChildren(...content);
         };
         draw(initial);poll.add(()=>lab.status().then(draw),5);
