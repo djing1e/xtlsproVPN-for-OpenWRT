@@ -12,7 +12,7 @@ test -s /etc/xtls-router-bot/config.json
 test -s /opt/xtls-router-bot/backup.py
 work=$(mktemp -d /tmp/xtls-rich-presence-install.XXXXXX)
 trap 'rm -rf "$work"' EXIT
-ref=79d0e1febd471c761b0094ec614b149ead9026bd
+ref=d3a552da9c7ce5cc0d8945017e4e7f580f514b2f
 base="https://raw.githubusercontent.com/djing1e/xtlsproVPN-for-OpenWRT/$ref/integrations/router-bot/server"
 for file in bot.py upgrade.py; do
     curl -fLsS --connect-timeout 10 --max-time 60 "$base/$file" -o "$work/$file"
