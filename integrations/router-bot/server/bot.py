@@ -1435,7 +1435,7 @@ class Bot:
                       '\nПеред установкой проверяем HTTPS, NetBird и аварийный SSH. После — версию и штатные проверки настроек, HTTPS и DNS. Ошибка установки приостанавливает очередь; автоматических повторов нет.'+
                       '\nXray, NetBird и прошивка OpenWrt не обновляются. План действует 2 минуты.',
                       [[self.button(uid,rid,'✅ Обновить до '+version,'fleet_confirm',batch)],
-                       [self.button(uid,rid,'Отмена','fleet_menu')]])
+                       [self.button(uid,rid,'Отмена','fleet_cancel',batch)]])
         except SafeError as error: self.inform(uid,str(error))
         except Exception:
             LOG.error('fleet preparation failed')

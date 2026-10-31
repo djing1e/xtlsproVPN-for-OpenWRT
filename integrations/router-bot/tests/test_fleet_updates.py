@@ -138,6 +138,15 @@ class FleetUpdates(unittest.TestCase):
             token=self.store.button(client,'lab',action,target,self.store.grant_epoch(client,'lab'))
             self.bot.handle(self.callback(token,uid=client))
         self.assertEqual(self.store.fleet_get(UID,self.batch)['state'],'draft');self.assertFalse(self.calls)
+    def test_cancelled_preview_invalidates_its_old_confirmation(self):
+        self.bot.fleet_prepare(UID,'lab')
+        buttons=[button for _,payload in self.tg.calls for row in payload.get('reply_markup',{}).get('inline_keyboard',[]) for button in row]
+        confirm=next(x['callback_data'] for x in buttons if x['text'].startswith('✅ Обновить'))
+        cancel=next(x['callback_data'] for x in buttons if x['text']=='Отмена')
+        with patch.object(self.bot.pool,'submit') as submit:
+            self.bot.handle(self.callback(cancel));self.bot.handle(self.callback(confirm,update_id=43))
+            submit.assert_not_called()
+        self.assertEqual(self.store.fleet_get(UID)['state'],'done');self.assertFalse(self.calls)
     def test_confirmation_button_is_one_use_and_does_not_install_before_confirmation(self):
         self.bot.fleet_prepare(UID,'lab');self.assertFalse(self.calls)
         buttons=[row for _,payload in self.tg.calls for row in payload.get('reply_markup',{}).get('inline_keyboard',[])]
