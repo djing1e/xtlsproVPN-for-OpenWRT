@@ -67,6 +67,13 @@ class Store:
                 CREATE TABLE IF NOT EXISTS operations (
                     update_id INTEGER PRIMARY KEY, uid INTEGER, router TEXT,
                     action TEXT, target TEXT, state TEXT, job TEXT, created INTEGER);
+                CREATE TABLE IF NOT EXISTS fleet_updates (
+                    id TEXT PRIMARY KEY, uid INTEGER, version TEXT, digest TEXT,
+                    state TEXT, created INTEGER, cancel INTEGER DEFAULT 0);
+                CREATE TABLE IF NOT EXISTS fleet_update_items (
+                    seq INTEGER PRIMARY KEY AUTOINCREMENT, batch TEXT, router TEXT,
+                    identity TEXT, state TEXT DEFAULT 'queued', reason TEXT DEFAULT '',
+                    request TEXT, started INTEGER, UNIQUE(batch,router));
             ''')
             columns = {row[1] for row in db.execute('PRAGMA table_info(buttons)')}
             if 'grant_epoch' not in columns:
@@ -114,6 +121,80 @@ class Store:
             ''')
             # A lost process must never replay an SSH mutation after a restart.
             db.execute("UPDATE operations SET state='interrupted' WHERE state='running'")
+            db.execute("UPDATE fleet_update_items SET state='unconfirmed',reason='process_restart' WHERE state='installing'")
+            db.execute("UPDATE fleet_update_items SET state='queued' WHERE state='checking'")
+            db.execute("UPDATE fleet_updates SET state='paused' WHERE state='running'")
+            db.execute("UPDATE fleet_update_items SET state='cancelled' WHERE state='queued' AND batch IN (SELECT id FROM fleet_updates WHERE cancel=1)")
+            db.execute("UPDATE fleet_updates SET state='done' WHERE cancel=1")
+
+    def fleet_create(self, uid, version, digest, routers):
+        batch = str(uuid.uuid4())
+        with self.connect() as db:
+            db.execute('INSERT INTO fleet_updates(id,uid,version,digest,state,created) VALUES (?,?,?,?,?,?)',
+                       (batch,uid,version,digest,'draft',int(time.time())))
+            db.executemany('INSERT INTO fleet_update_items(batch,router,identity) VALUES (?,?,?)',
+                           [(batch,rid,json.dumps(identity,sort_keys=True)) for rid,identity in routers])
+        return batch
+
+    def fleet_get(self, uid, batch=None):
+        with self.connect() as db:
+            row = db.execute('SELECT * FROM fleet_updates WHERE uid=? ' +
+                             ('AND id=?' if batch else "ORDER BY (state IN ('running','paused')) DESC,created DESC,rowid DESC LIMIT 1"),
+                             (uid,batch) if batch else (uid,)).fetchone()
+            if not row: return None
+            data=dict(row)
+            data['items']=[dict(r) for r in db.execute('SELECT * FROM fleet_update_items WHERE batch=? ORDER BY seq',(data['id'],))]
+            return data
+
+    def fleet_start(self, uid, batch, resume=False):
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row=db.execute('SELECT * FROM fleet_updates WHERE id=? AND uid=?',(batch,uid)).fetchone()
+            if not row or row['state'] != ('paused' if resume else 'draft') or row['cancel']:
+                raise SafeError('Очередь уже запущена, остановлена или недоступна.')
+            if not resume and int(time.time())-row['created']>120:
+                raise SafeError('План устарел. Проверьте релиз заново.')
+            if db.execute("SELECT 1 FROM fleet_updates WHERE id!=? AND state IN ('running','paused')",(batch,)).fetchone():
+                raise SafeError('Другая массовая очередь ещё не завершена.')
+            if db.execute("SELECT 1 FROM operator_jobs WHERE state='pending'").fetchone():
+                raise SafeError('Дождитесь завершения административной операции бота.')
+            db.execute("UPDATE fleet_updates SET state='running' WHERE id=?",(batch,))
+
+    def fleet_item(self, batch, rid, state, reason='', request=None):
+        if state not in ('queued','checking','installing','updated','current','offline','skipped','failed','unconfirmed','cancelled'):
+            raise ValueError('fleet item state')
+        with self.connect() as db:
+            db.execute('UPDATE fleet_update_items SET state=?,reason=?,request=coalesce(?,request) WHERE batch=? AND router=?',
+                       (state,reason,request,batch,rid))
+
+    def fleet_install_intent(self, uid, batch, item, request):
+        # Persist before dispatch. A crash or lost receipt can only reconcile, never resend.
+        operation=-(1_000_000_000_000+item['seq'])
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row=db.execute('SELECT state,cancel FROM fleet_updates WHERE id=? AND uid=?',(batch,uid)).fetchone()
+            if not row or row['state']!='running' or row['cancel']: return None
+            now=int(time.time())
+            if db.execute("SELECT 1 FROM operations WHERE router=? AND action IN ('netbird','proxy','reboot','update_app','update_xray','update_netbird') AND created>?",(item['router'],now-300)).fetchone():
+                raise SafeError('После административной операции подождите 5 минут.')
+            changed=db.execute("UPDATE fleet_update_items SET state='installing',request=?,started=? WHERE seq=? AND batch=? AND state='checking'",(request,now,item['seq'],batch)).rowcount
+            if changed!=1: raise SafeError('Задание уже принято; повторная установка запрещена.')
+            db.execute('INSERT INTO operations VALUES (?,?,?,?,?,?,?,?)',
+                       (operation,uid,item['router'],'update_app',batch,'running',request,now))
+        return operation
+
+    def fleet_state(self, uid, batch, state):
+        if state not in ('paused','done'): raise ValueError('fleet batch state')
+        with self.connect() as db:
+            db.execute("UPDATE fleet_updates SET state=? WHERE id=? AND uid=? AND state='running' AND cancel=0",(state,batch,uid))
+
+    def fleet_cancel(self, uid, batch):
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            db.execute("UPDATE fleet_updates SET cancel=1 WHERE id=? AND uid=?",(batch,uid))
+            db.execute("UPDATE fleet_update_items SET state='cancelled' WHERE batch=? AND state='queued' AND EXISTS(SELECT 1 FROM fleet_updates WHERE id=? AND uid=? AND cancel=1)",(batch,batch,uid))
+            # The worker still owns any checking/installing item until it finishes.
+            db.execute("UPDATE fleet_updates SET state='done' WHERE id=? AND uid=? AND NOT EXISTS(SELECT 1 FROM fleet_update_items WHERE batch=? AND state IN ('checking','installing'))",(batch,uid,batch))
 
     @contextmanager
     def connect(self):
@@ -155,7 +236,7 @@ class Store:
             now = int(time.time())
             db.execute('DELETE FROM buttons WHERE expires < ?', (now,))
             db.execute('INSERT INTO buttons(token,uid,router,action,target,expires,grant_epoch) VALUES (?,?,?,?,?,?,?)',
-                       (token, uid, router, action, target, now + (120 if action in ('admin_confirm', 'admin_reboot_confirm', 'update_install') else 900), grant_epoch))
+                       (token, uid, router, action, target, now + (120 if action in ('admin_confirm', 'admin_reboot_confirm', 'update_install', 'fleet_confirm') else 900), grant_epoch))
         return token
 
     def take_button(self, token, uid):
@@ -333,6 +414,8 @@ class Store:
                 raise SafeError('Административная операция уже выполняется. Дождитесь результата.')
             if db.execute("SELECT 1 FROM operations WHERE state='running'").fetchone():
                 raise SafeError('Выполняется операция роутера. Дождитесь её завершения.')
+            if db.execute("SELECT 1 FROM fleet_updates WHERE state='running'").fetchone():
+                raise SafeError('Массовое обновление выполняется. Дождитесь завершения очереди.')
             if db.execute('SELECT 1 FROM operator_jobs WHERE action=? AND created>?',(action,int(time.time())-60)).fetchone():
                 raise SafeError('Подождите минуту перед повтором операции.')
             job=str(uuid.uuid4())
@@ -1030,6 +1113,7 @@ class Bot:
         self.store.cancel_admin(uid, rid)
         self.send_router(uid, rid, self.router_label(rid) + ' · Администрирование\nОперации могут временно прервать связь.', [
             [self.button(uid, rid, '✏️ Переименовать', 'rename_prompt')],
+            [self.button(uid, rid, '⬆️ Обновить все роутеры', 'fleet_menu')],
             [self.button(uid, rid, '🔧 Восстановить NetBird', 'admin_prompt', 'netbird')],
             [self.button(uid, rid, '🔧 Восстановить прокси', 'admin_prompt', 'proxy')],
             [self.button(uid, rid, '🔄 Перезагрузить роутер', 'admin_prompt', 'reboot')],
@@ -1051,7 +1135,7 @@ class Bot:
         self.send_router(uid, rid, text, [[self.button(uid, rid, '✅ Подтвердить', button_action, action)],
                                          [self.button(uid, rid, 'Отмена', 'admin_menu')]])
 
-    def prepare_rescue(self, uid, rid):
+    def prepare_rescue(self, uid, rid, quiet=False):
         self.admin(uid)
         try:
             before = self.router_call(uid, rid, 'xtlsbot-v1 admin-status', transport='rescue')
@@ -1064,7 +1148,8 @@ class Bot:
             opened = self.router_call(uid, rid, 'xtlsbot-v1 admin-open-rescue', transport='netbird')
             if opened.get('ok') is not True:
                 raise SafeError('Открытие аварийного канала не подтверждено.')
-            self.send_router(uid, rid, 'Открываем настроенный аварийный канал на 30 минут…')
+            if not quiet:
+                self.send_router(uid, rid, 'Открываем настроенный аварийный канал на 30 минут…')
             ready_deadline = time.monotonic() + 45
             while True:
                 time.sleep(3)
@@ -1293,11 +1378,258 @@ class Bot:
                 '\nПосле ввода появится подтверждение. Ожидание — 10 минут.')
         self.send(uid, text, [[self.button(uid, rid, 'Отмена', 'access')]])
 
+    @staticmethod
+    def fleet_identity(router):
+        return {k:router.get(k) for k in ('device_id','host','port','rescue')}
+
+    @staticmethod
+    def app_version(value):
+        match=re.fullmatch(r'(\d+)\.(\d+)\.(\d+)-r(\d+)',value or '')
+        return tuple(map(int,match.groups())) if match else None
+
+    def latest_app_release(self, force=False):
+        # Fixed official origin; never follow a URL supplied by a router or Telegram.
+        base='https://api.github.com/repos/djing1e/xtlsproVPN-for-OpenWRT/releases/latest'
+        opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        def read(url):
+            with opener.open(urllib.request.Request(url,headers={'User-Agent':'xtls-router-bot','Accept':'application/json','Cache-Control':'no-cache'}),timeout=20) as response:
+                body=response.read(262145)
+            if len(body)>262144: raise ValueError('release too large')
+            return json.loads(body)
+        try:
+            cached=getattr(self,'_fleet_release_cache',None)
+            if not force and cached and 0<=time.monotonic()-cached[0]<120:
+                release=cached[1]
+            else:
+                release=read(base)
+                self._fleet_release_cache=(time.monotonic(),release)
+            tag=release.get('tag_name','')
+            if release.get('draft') is not False or release.get('prerelease') is not False or not re.fullmatch(r'v\d+\.\d+\.\d+',tag):
+                raise ValueError('stable release required')
+            url='https://github.com/djing1e/xtlsproVPN-for-OpenWRT/releases/download/'+tag+'/update.json'
+            if not any(a.get('name')=='update.json' and a.get('browser_download_url')==url for a in release.get('assets',[])):
+                raise ValueError('manifest missing')
+            manifest=read(url);version=manifest.get('version');digest=manifest.get('apk',{}).get('sha256')
+            if manifest.get('schema')!=1 or manifest.get('tag')!=tag or not self.app_version(version) or not version.startswith(tag[1:]+'-r'):
+                raise ValueError('manifest version')
+            if not isinstance(digest,str) or not re.fullmatch('[a-f0-9]{64}',digest): raise ValueError('manifest digest')
+            if manifest['apk'].get('name')!='xtlsprovpn-'+version+'.apk': raise ValueError('manifest asset')
+            size=manifest['apk'].get('size')
+            if type(size) is not int or not 0<size<=8388608:raise ValueError('manifest size')
+            asset=next((a for a in release['assets'] if a.get('name')==manifest['apk']['name']),None)
+            if not asset or asset.get('size')!=size or asset.get('digest') not in (None,'sha256:'+digest):
+                raise ValueError('release asset mismatch')
+            return version,digest
+        except Exception:
+            raise SafeError('Не удалось проверить стабильный релиз официального репозитория. Установки не запускались.') from None
+
+    def fleet_prepare(self, uid, rid):
+        try:
+            self.admin(uid)
+            version,digest=self.latest_app_release(force=True)
+            order=[rid]+sorted(r for r in self.config['routers'] if r!=rid)
+            routers=[(r,self.fleet_identity(self.config['routers'][r])) for r in order]
+            batch=self.store.fleet_create(uid,version,digest,routers)
+            self.send(uid,'Массовое обновление APK xtlsproVPN\nВерсия: '+version+'\nРоутеров в плане: '+str(len(routers))+
+                      '\nПриоритет первой проверки: '+self.router_name(rid)+'.\nОбновляем по одному; сначала проверяем первый подходящий роутер. Уже актуальные, занятые, отключённые и недоступные устройства учитываются отдельно.'+
+                      '\nПеред установкой проверяем HTTPS, NetBird и аварийный SSH. После — версию и штатные проверки настроек, HTTPS и DNS. Ошибка установки приостанавливает очередь; автоматических повторов нет.'+
+                      '\nXray, NetBird и прошивка OpenWrt не обновляются. План действует 2 минуты.',
+                      [[self.button(uid,rid,'✅ Обновить до '+version,'fleet_confirm',batch)],
+                       [self.button(uid,rid,'Отмена','fleet_cancel',batch)]])
+        except SafeError as error: self.inform(uid,str(error))
+        except Exception:
+            LOG.error('fleet preparation failed')
+            self.inform(uid,'План массового обновления не подготовлен. Установки не запускались.')
+
+    def fleet_prepare_async(self, uid, rid):
+        self.admin(uid)
+        with self.read_guard:
+            if uid in self.read_busy:return
+            self.read_busy.add(uid)
+        def work():
+            try:self.fleet_prepare(uid,rid)
+            finally:
+                with self.read_guard:self.read_busy.discard(uid)
+        try:self.pool.submit(work)
+        except Exception:
+            with self.read_guard:self.read_busy.discard(uid)
+            raise
+
+    def fleet_report(self, uid, rid, batch=None, page=0):
+        self.admin(uid)
+        data=self.store.fleet_get(uid,batch)
+        rows=[]
+        if not data:
+            text='Массовое обновление APK xtlsproVPN\nПроверьте последний стабильный релиз и подтвердите план.'
+        else:
+            items=data['items'];counts={}
+            for item in items: counts[item['state']]=counts.get(item['state'],0)+1
+            state={'draft':'План','running':'Выполняется','paused':'Приостановлено','done':'Завершено'}[data['state']]
+            text='Массовое обновление · '+data['version']+'\n'+state+(' · остановка запрошена' if data['cancel'] else '')
+            text+='\nВсего: '+str(len(items))+' · обновлено: '+str(counts.get('updated',0))+' · уже актуально: '+str(counts.get('current',0))
+            text+='\nНедоступны: '+str(counts.get('offline',0))+' · пропущено: '+str(counts.get('skipped',0))
+            text+='\nОшибки: '+str(counts.get('failed',0)+counts.get('unconfirmed',0))+' (не подтверждено: '+str(counts.get('unconfirmed',0))+')'
+            text+='\nВ очереди: '+str(counts.get('queued',0))+' · выполняется: '+str(counts.get('checking',0)+counts.get('installing',0))+' · отменено: '+str(counts.get('cancelled',0))
+            labels={'queued':'ожидает','checking':'проверка','installing':'установка','updated':'обновлён','current':'актуальная или более новая версия','offline':'нет связи','skipped':'пропущен','failed':'ошибка','unconfirmed':'результат не подтверждён','cancelled':'отменён'}
+            reasons={'busy':'занят','unhealthy':'прокси не прошёл проверку','stopped':'прокси выключен','check':'каталог не подтверждён','release_changed':'каталог изменился','rescue':'аварийный доступ не подтверждён','identity':'настройки устройства изменились','process_restart':'процесс бота перезапускался','install':'штатные проверки не пройдены','transport':'потеряно подтверждение','cooldown':'пауза после административной операции','version':'версия не подтверждена','settings':'проверка настроек не пройдена','https':'HTTPS не прошёл проверку','dns_udp':'DNS по UDP не прошёл проверку','dns_tcp':'DNS по TCP не прошёл проверку','native':'установщик не подтвердил завершение'}
+            pages=max(1,(len(items)+9)//10);page=max(0,min(page,pages-1))
+            for item in items[page*10:(page+1)*10]:
+                name=self.router_name(item['router']) if item['router'] in self.config['routers'] else item['router']
+                text+='\n• '+name[:60]+': '+labels[item['state']]+(' · '+reasons.get(item['reason'],'требуется проверка') if item['reason'] else '')
+            nav=[]
+            for number,label in ((page-1,'⬅️'),(page+1,'➡️')):
+                if 0<=number<pages: nav.append(self.button(uid,rid,label,'fleet_status',data['id']+':'+str(number)))
+            if nav:rows.append(nav)
+            rows.append([self.button(uid,rid,'🔄 Статистика','fleet_status',data['id']+':'+str(page))])
+            if data['state']=='paused' and not data['cancel']:
+                text+='\nПродолжение проверит неподтверждённую операцию без повторной установки. Недоступное устройство требует ручной проверки.'
+                rows.append([self.button(uid,rid,'▶️ Продолжить оставшиеся','fleet_resume',data['id'])])
+            if data['state'] in ('running','paused'):
+                rows.append([self.button(uid,rid,'⏹ Остановить очередь','fleet_cancel',data['id'])])
+                text+='\nОстановка отменяет ожидающие задания; начатая установка завершается и проверяется.'
+        if not data or data['state'] in ('done','draft'):
+            rows.append([self.button(uid,rid,'🔎 Проверить стабильный релиз','fleet_prepare')])
+        rows.append([self.button(uid,rid,'⬅️ Администрирование','operator_menu')])
+        self.send(uid,text,rows)
+
+    def fleet_notify(self, uid, rid, batch):
+        try: self.fleet_report(uid,rid,batch)
+        except Exception: LOG.warning('fleet report unavailable; results retained')
+
+    def fleet_wait(self, uid, rid, request, action, seconds):
+        deadline=time.monotonic()+seconds
+        while time.monotonic()<deadline:
+            time.sleep(3)
+            try:data=self.router_call(uid,rid,'xtlsbot-v1 updates')
+            except SafeError:continue
+            job=data.get('job',{})
+            if job.get('id')!=request or job.get('component')!='app' or job.get('action')!=action:
+                raise SafeError('Результат не подтверждён.')
+            if job.get('state') in ('pending','running'):continue
+            return data
+        raise SafeError('Время ожидания истекло.')
+
+    def fleet_verify(self, uid, rid, version, started):
+        status=self.router_call(uid,rid,'xtlsbot-v1 status',transport='netbird')
+        admin=self.router_call(uid,rid,'xtlsbot-v1 admin-status',transport='rescue')
+        checked=status.get('health_checked')
+        return (status.get('version')==version and status.get('running') is True and status.get('enabled') is True and
+                status.get('proxy_ok') is True and isinstance(checked,(int,float)) and not isinstance(checked,bool) and
+                checked>=started-2 and 0<=time.time()-checked<=90 and admin.get('netbird_connected') is True)
+
+    def fleet_reconcile(self, uid, data, item):
+        rid=item['router']
+        if rid not in self.locks or not self.locks[rid].acquire(blocking=False):return False
+        try:
+            if json.loads(item['identity'])!=self.fleet_identity(self.config['routers'][rid]):return False
+            result=self.router_call(uid,rid,'xtlsbot-v1 updates')
+            job=result.get('job',{})
+            if job.get('id')!=item['request'] or job.get('component')!='app' or job.get('action')!='install':return False
+            if job.get('state') in ('pending','running'):return False
+            # The 30-minute rescue lease may have expired during a bot restart.
+            # Reopen the channel, never resend the installation request.
+            self.prepare_rescue(uid,rid,quiet=True)
+            verified=self.fleet_verify(uid,rid,data['version'],item['started'] or 0)
+            self.store.fleet_item(data['id'],rid,'updated' if verified and job.get('state')=='done' else 'failed','' if verified and job.get('state')=='done' else 'install')
+            self.store.finish(-(1_000_000_000_000+item['seq']),'done' if verified and job.get('state')=='done' else 'unconfirmed')
+            return verified
+        except Exception:return False
+        finally:self.locks[rid].release()
+
+    def fleet_update_one(self, uid, data, item):
+        rid=item['router'];batch=data['id'];operation=None;dispatched=False
+        if rid not in self.locks or not self.locks[rid].acquire(blocking=False):
+            self.store.fleet_item(batch,rid,'skipped','busy');return True
+        try:
+            if json.loads(item['identity'])!=self.fleet_identity(self.config['routers'][rid]):
+                self.store.fleet_item(batch,rid,'skipped','identity');return True
+            self.store.fleet_item(batch,rid,'checking')
+            try:status=self.router_call(uid,rid,'xtlsbot-v1 status',transport='netbird')
+            except SafeError:
+                self.store.fleet_item(batch,rid,'offline');return True
+            current=self.app_version(status.get('version'))
+            if current and current>=self.app_version(data['version']):
+                self.store.fleet_item(batch,rid,'current');return True
+            if status.get('operation_busy') or status.get('job',{}).get('state') in ('pending','running'):
+                self.store.fleet_item(batch,rid,'skipped','busy');return True
+            if status.get('running') is not True or status.get('enabled') is not True:
+                self.store.fleet_item(batch,rid,'skipped','stopped');return True
+            if status.get('proxy_ok') is not True or not isinstance(status.get('health_checked'),(int,float)) or not 0<=time.time()-status['health_checked']<=90:
+                self.store.fleet_item(batch,rid,'skipped','unhealthy');return True
+            check=str(uuid.uuid4())
+            receipt=self.router_call(uid,rid,'xtlsbot-v1 update-check app '+check)
+            if receipt.get('accepted') is not True or receipt.get('id')!=check or receipt.get('component')!='app' or receipt.get('action')!='check':
+                raise SafeError('Каталог не подтверждён.')
+            result=self.fleet_wait(uid,rid,check,'check',750)
+            plan=next((p for p in result.get('plans',[]) if p.get('component')=='app' and p.get('id')==check),None)
+            if result.get('job',{}).get('state')!='done' or not plan or plan.get('valid') is not True or plan.get('update_available') is not True:
+                self.store.fleet_item(batch,rid,'skipped','check');return True
+            if plan.get('available')!=data['version']:
+                self.store.fleet_item(batch,rid,'failed','release_changed');return False
+            if self.latest_app_release()!=(data['version'],data['digest']):
+                self.store.fleet_item(batch,rid,'failed','release_changed');return False
+            try:
+                before=self.prepare_rescue(uid,rid,quiet=True)
+                if before.get('netbird_connected') is not True:raise SafeError('NetBird не подключён.')
+            except SafeError:
+                self.store.fleet_item(batch,rid,'skipped','rescue');return True
+            request=str(uuid.uuid4())
+            started=int(time.time())
+            try:operation=self.store.fleet_install_intent(uid,batch,item,request)
+            except SafeError:
+                self.store.fleet_item(batch,rid,'skipped','cooldown');return True
+            if operation is None:
+                self.store.fleet_item(batch,rid,'cancelled');return True
+            dispatched=True
+            receipt=self.router_call(uid,rid,'xtlsbot-v1 update-install app '+request+' '+check,transport='rescue')
+            if receipt.get('accepted') is not True or receipt.get('id')!=request or receipt.get('component')!='app' or receipt.get('action')!='install':
+                raise SafeError('Приём установки не подтверждён.')
+            result=self.fleet_wait(uid,rid,request,'install',1500)
+            if result.get('job',{}).get('state')!='done':
+                phase=result.get('job',{}).get('reason')
+                self.store.fleet_item(batch,rid,'failed',phase if phase in ('version','settings','https','dns_udp','dns_tcp','native') else 'install');self.store.finish(operation,'unconfirmed');return False
+            if not self.fleet_verify(uid,rid,data['version'],started):
+                raise SafeError('Проверки после установки не подтверждены.')
+            self.store.fleet_item(batch,rid,'updated');self.store.finish(operation,'done');return True
+        except Exception:
+            self.store.fleet_item(batch,rid,'unconfirmed' if dispatched else 'skipped','transport' if dispatched else 'check')
+            if operation is not None:self.store.finish(operation,'unconfirmed')
+            return not dispatched
+        finally:self.locks[rid].release()
+
+    def fleet_worker(self, uid, rid, batch, resume=False):
+        try:
+            self.admin(uid);data=self.store.fleet_get(uid,batch)
+            if not data or data['state']!='running':return
+            if resume:
+                for item in data['items']:
+                    if item['state'] in ('unconfirmed','failed') and not self.fleet_reconcile(uid,data,item):
+                        self.store.fleet_state(uid,batch,'paused');return
+            last_report=time.monotonic()
+            for item in self.store.fleet_get(uid,batch)['items']:
+                if item['state']!='queued':continue
+                if self.store.fleet_get(uid,batch)['cancel']:break
+                if not self.fleet_update_one(uid,data,item):
+                    self.store.fleet_state(uid,batch,'paused');return
+                if time.monotonic()-last_report>=60:
+                    self.fleet_notify(uid,rid,batch);last_report=time.monotonic()
+            latest=self.store.fleet_get(uid,batch)
+            if latest['cancel']:self.store.fleet_cancel(uid,batch)
+            else:self.store.fleet_state(uid,batch,'done')
+        except Exception:
+            LOG.error('fleet worker paused; results retained')
+            self.store.fleet_state(uid,batch,'paused')
+        finally:
+            latest=self.store.fleet_get(uid,batch)
+            if latest and latest['cancel']:self.store.fleet_cancel(uid,batch)
+            self.fleet_notify(uid,rid,batch)
+
     def operator_menu(self, uid, rid):
         self.admin(uid)
         self.store.operator_dialog(uid,'clear')
         self.send(uid,'Администрирование бота',[
             [self.button(uid,rid,'➕ Добавить роутер','operator_add')],
+            [self.button(uid,rid,'⬆️ Обновить все роутеры','fleet_menu')],
             [self.button(uid,rid,'🔐 Создать бэкап','operator_backup')],
             [self.button(uid,rid,'🏠 Мои роутеры','menu')]])
 
@@ -1455,7 +1787,29 @@ class Bot:
             self.store.catalog(uid, catalog['query'], catalog['page'])
             self.store.clear_dialog(uid)
             if uid==self.config['admin_id']:self.store.operator_dialog(uid,'clear')
-            if action == 'rename_prompt':
+            if action == 'fleet_menu':
+                self.fleet_report(uid,rid)
+            elif action == 'fleet_prepare':
+                self.fleet_prepare_async(uid,rid)
+            elif action == 'fleet_status':
+                self.admin(uid)
+                match=re.fullmatch(r'([a-f0-9-]{36}):([0-9]{1,6})',target)
+                if not match or not JOB.fullmatch(match[1]):raise SafeError('Недопустимая очередь.')
+                self.fleet_report(uid,rid,match[1],int(match[2]))
+            elif action in ('fleet_confirm','fleet_resume','fleet_cancel'):
+                self.admin(uid)
+                if not JOB.fullmatch(target):raise SafeError('Недопустимая очередь.')
+                if action=='fleet_cancel':
+                    self.store.fleet_cancel(uid,target);self.fleet_report(uid,rid,target)
+                else:
+                    resume=action=='fleet_resume'
+                    self.store.fleet_start(uid,target,resume)
+                    self.fleet_notify(uid,rid,target)
+                    try:self.pool.submit(self.fleet_worker,uid,rid,target,resume)
+                    except Exception:
+                        self.store.fleet_state(uid,target,'paused')
+                        raise SafeError('Очередь сохранена и приостановлена. Установки не отправлялись.') from None
+            elif action == 'rename_prompt':
                 self.admin(uid)
                 self.store.operator_dialog(uid, 'rename', rid)
                 self.send(uid, 'Введите новое имя роутера (1–80 символов). Ожидание — 15 минут.',
