@@ -1,4 +1,5 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later
+/* SPDX-License-Identifier: Apache-2.0
+ * See LICENSE.luci for the upstream license.
  * Class and module loader excerpts from OpenWrt LuCI commit 128a781.
  * https://github.com/openwrt/luci/blob/128a781/modules/luci-base/htdocs/luci-static/resources/luci.js
  * Kept verbatim; test harness supplies DOM/HTTP and built-in modules.
