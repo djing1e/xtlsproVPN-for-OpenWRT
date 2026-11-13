@@ -56,7 +56,7 @@ while read -r old alt new path;do
     [ "$actual" = "$new" ] || changed=1
 done < "$work/manifest"
 if [ "$changed" = 0 ];then echo 'Стабильный автовыбор уже установлен.';exit 0;fi
-base=https://raw.githubusercontent.com/djing1e/xtlsproVPN-for-OpenWRT/5f028d15b40ac0043168ba1ab7550528b89050cb/package/xtlsprovpn/files
+base=https://raw.githubusercontent.com/djing1e/xtlsproVPN-for-OpenWRT/72e835fe7d328a5e7f80c46b812f66bf95465227/package/xtlsprovpn/files
 while read -r old alt new path;do
     mkdir -p "$work/new/$(dirname "$path")"
     curl -q -4 --noproxy '*' -fL --connect-timeout 10 --max-time 60 "$base/$path" -o "$work/new/$path"
