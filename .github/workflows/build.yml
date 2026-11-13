@@ -66,6 +66,7 @@ jobs:
           node tests/test_settings_menu_ui.js
           node tests/test_luci_module_loader.js
           python3 -m unittest discover -s tests -p test_finalmask.py
+          python3 -m unittest discover -s tests -p test_finalmask_installer.py
           python3 -m unittest discover -s tests -p test_auto_selection.py
           python3 -m unittest discover -s tests -p test_stable_auto_installer.py
           python3 -m unittest discover -s tests -p test_luci_constructor_fix.py
