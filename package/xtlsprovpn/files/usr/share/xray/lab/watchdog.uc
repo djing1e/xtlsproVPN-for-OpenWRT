@@ -65,9 +65,9 @@ export function decide(old, input) {
         if(input.probe_new){
             if(input.proxy_ok){s.failures=0;s.wait_uplink=false;recovered();}
             else {
-                outage();s.failures=(s.failures || 0)+1;s.wait_uplink=!input.direct_ok;
+                outage();s.failures=(s.failures || 0)+1;s.wait_uplink=input.direct_checked!==false && !input.direct_ok;
                 // Direct DNS/HTTPS may also be blocked; this must not keep a dead tunnel active.
-                if(s.failures>=3)return bypass('proxy_failed');
+                if(s.failures>=2)return bypass('proxy_failed');
             }
         }
     }

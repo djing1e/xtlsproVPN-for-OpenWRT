@@ -7,6 +7,8 @@ import unittest
 ROOT=Path(__file__).resolve().parents[1]
 FILES=ROOT/'package/xtlsprovpn/files'
 SCRIPT=ROOT/'scripts/fix-luci-constructor-148.sh'
+FIXTURE=ROOT/'tests/fixtures/luci-148/settings_memory147.js'
+def payload(name):return (FIXTURE if name.startswith('settings_') else FIXTURE.parent/(name+'.js') if name=='monitoring_compact_052' else FILES/REL/(name+'.js')).read_bytes()
 REL='www/luci-static/resources/view/xray/'
 
 class LuCIConstructorFix(unittest.TestCase):
@@ -16,7 +18,7 @@ class LuCIConstructorFix(unittest.TestCase):
             'settings_052':"'use strict';\n'require view.xray.settings_memory147 as settingsView';\n\nreturn settingsView;\n",
             'settings_transfer2':"'use strict';\n'require view.xray.settings_memory147 as settingsView';\n\nreturn settingsView;\n",
             **{name:"'use strict';\n'require view.xray."+target+" as page';\nreturn page;\n" for name,target in {'dashboard_052':'dashboard_148','diagnostics_updates2':'diagnostics_148','monitoring_compact_052':'monitoring_148'}.items()},
-            'settings_memory147':(FILES/REL/'settings_memory147.js').read_text().replace('view.xray.lab_148 as lab','view.xray.lab_052 as lab'),
+            'settings_memory147':FIXTURE.read_text().replace('view.xray.lab_148 as lab','view.xray.lab_052 as lab'),
         }
         for case in ('success','unknown','corrupt','rollback','version'):
             with self.subTest(case=case),tempfile.TemporaryDirectory() as temp:
@@ -33,6 +35,8 @@ r=pathlib.Path({str(r)!r});args=sys.argv[1:]
 with (r/'requests').open('a') as f:f.write('download\\n')
 url=next(a for a in args if a.startswith('https://'))
 source=pathlib.Path({str(FILES)!r})/url.split('/package/xtlsprovpn/files/',1)[1]
+if source.name.startswith('settings_'):source=pathlib.Path({str(FIXTURE)!r})
+if source.name=='monitoring_compact_052.js':source=pathlib.Path({str(FIXTURE.parent/'monitoring_compact_052.js')!r})
 dest=pathlib.Path(args[args.index('-o')+1])
 dest.write_bytes(b'corrupted' if {case=='corrupt'!r} else source.read_bytes())
 ''')
@@ -48,7 +52,7 @@ os.replace(*args)
                 self.assertEqual(result.returncode==0,case=='success',result.stdout+result.stderr)
                 after={p.name:p.read_bytes() for p in (r/REL).iterdir()}
                 if case=='success':
-                    self.assertEqual(after,{n+'.js':(FILES/REL/(n+'.js')).read_bytes() for n in old})
+                    self.assertEqual(after,{n+'.js':payload(n) for n in old})
                     self.assertEqual(len(list((r/'root').iterdir())),1)
                     requests=(r/'requests').read_text()
                     again=subprocess.run(['sh',str(SCRIPT)],env=env,capture_output=True,text=True,timeout=20)

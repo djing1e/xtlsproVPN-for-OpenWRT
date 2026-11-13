@@ -90,7 +90,7 @@ opts.custom_configuration_hook = `return function(i) {
 };`;
 for (let key,value in opts) if (type(value)!='array' || length(value)) uci.set('xray_core','general',key,value);
 if (previous.general?.fx_dashboard=='1') {
-    for (let key in ['fx_dashboard','fx_mode','fx_probe_url','fx_probe_interval','fx_watchdog_enabled','fx_watch_interface','fx_watch_delay','fx_routing','fx_rule_block_domains','fx_rule_block_ips','fx_rule_proxy_domains','fx_rule_proxy_ips','fx_rule_direct_domains','fx_rule_direct_ips','fx_access_log','fx_start_authorized'])
+    for (let key in ['fx_dashboard','fx_mode','fx_probe_url','fx_probe_interval','fx_health_interval','fx_watchdog_enabled','fx_watch_interface','fx_watch_delay','fx_routing','fx_rule_block_domains','fx_rule_block_ips','fx_rule_proxy_domains','fx_rule_proxy_ips','fx_rule_direct_domains','fx_rule_direct_ips','fx_access_log','fx_start_authorized'])
         if (previous.general[key]!=null) uci.set('xray_core','general',key,previous.general[key]);
     let old = previous[previous.general.fx_location];
     let location=byid[old?.subscription_id] || names[old?.alias] || selected;

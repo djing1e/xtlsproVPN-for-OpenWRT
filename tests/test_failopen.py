@@ -15,9 +15,9 @@ class FailOpenPolicy(unittest.TestCase):
     def test_all_locations_dead_opens_even_if_direct_dns_also_fails(self):
         for direct in (False,True):
             state={}
-            for n in range(3):
+            for n in range(2):
                 r=self.decide(state,now=100+n*15,direct_ok=direct);state=r['state']
-                self.assertEqual(r['action'],'bypass' if n==2 else None)
+                self.assertEqual(r['action'],'bypass' if n==1 else None)
             self.assertEqual(r['reason'],'proxy_failed')
     def test_restart_limit_never_prevents_safety_bypass(self):
         r=self.decide({'failures':2,'restarts':[90,91,92],'last_restart':99})

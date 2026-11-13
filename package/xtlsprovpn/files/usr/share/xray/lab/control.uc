@@ -4,6 +4,7 @@ import { cursor } from 'uci';
 import { operation_lock, config, snapshot, save, load, run_dir, uptime, capture, health_check, latencies, diagnose, job, redacted_logs } from './state.mjs';
 import { selection_event } from './selection_events.mjs';
 import { decide } from './watchdog.uc';
+import { health_due } from './auto_policy.mjs';
 
 const action=ARGV[0] || 'status';
 let output;
@@ -34,7 +35,7 @@ case 'stage': {
     if (index(nodes,location)<0) die('Unknown location');
     for (let key,value in {fx_dashboard:'1',fx_mode:mode,fx_location:location,
         fx_probe_url:g.fx_probe_url || 'https://cp.cloudflare.com/generate_204',
-        fx_probe_interval:g.fx_probe_interval || '60',fx_watchdog_enabled:g.fx_watchdog_enabled || '1',
+        fx_probe_interval:g.fx_probe_interval || '60',fx_health_interval:g.fx_health_interval || '10',fx_watchdog_enabled:g.fx_watchdog_enabled || '1',
         fx_watch_interface:g.fx_watch_interface || 'lan',fx_watch_delay:g.fx_watch_delay || '2000',
         tcp_balancer_v4:mode=='auto'?nodes:[location],udp_balancer_v4:mode=='auto'?nodes:[location]})
         c.set('xray_core','general',key,value);
@@ -55,15 +56,21 @@ case 'watch-step': {
     const busy=s.operation_busy || index(['pending','running'],s.job.state)>=0;
     let h=s.health, fresh=false;
     if (g.fx_watchdog_enabled=='1' && s.enabled && s.autostart && s.interface.up && s.core.running && !busy &&
-        (!before.probe_at || now-before.probe_at>=(s.direct_mode || before.failures?15:60) || before.probe_pid!=s.core.pid)) {
+        health_due(before,now,s.core.pid,g.fx_health_interval)) {
         if (before.probe_pid!=s.core.pid) before.successes=0;
-        h=health_check(); fresh=true; before.probe_at=now; before.probe_pid=s.core.pid;
+        h=health_check(s.core.pid,true); fresh=true; before.probe_at=now; before.probe_pid=s.core.pid;
+    }
+    // Internal selector acquires action.lock and rechecks mode/PID/job state.
+    // Failed selection never suppresses the existing fail-open policy.
+    if (fresh && g.fx_mode=='auto') {
+        const selection=capture(['/usr/bin/xray-lab-control','auto-select']);
+        if (trim(selection.text)=='changed') h=health_check(s.core.pid,true);
     }
     const old_recovery=before.last_recovery,old_outages=before.outages || 0;
     const r=decide(before,{now,enabled:g.fx_watchdog_enabled=='1',desired:s.enabled && s.autostart,
         interface_up:s.interface.up,signature:s.interface.signature,settle:max(1,int((int(g.fx_watch_delay || 2000)+999)/1000)),
         busy,bypass:s.direct_mode,cleanup_needed:s.direct_mode && !s.direct_ready,core:s.core.running,interception:s.interception.active,probe_new:fresh,
-        proxy_ok:h?.proxy_ok===true,direct_ok:h?.direct_ok===true});
+        proxy_ok:h?.proxy_ok===true,direct_checked:h?.direct_checked,direct_ok:h?.direct_ok===true});
     if (r.state.last_recovery!=null && r.state.last_recovery!=old_recovery) r.state.recovery_at=time();
     if ((r.state.outages || 0)>old_outages) r.state.outage_at=time();
     r.state.reason=r.reason; r.state.checked=time(); r.state.enabled=g.fx_watchdog_enabled=='1';
