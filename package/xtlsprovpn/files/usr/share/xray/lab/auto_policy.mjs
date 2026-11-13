@@ -30,9 +30,10 @@ export function auto_decide(previous, input) {
         current.rtt_ms-n.rtt_ms>=50 && n.rtt_ms<=current.rtt_ms*0.8),
         (a,b)=>a.rtt_ms-b.rtt_ms)[0];
     if (!better) {s.better=null;s.streak=0;return out;}
-    const sample=min(current.checked,better.checked);
-    if (s.better!=better.id) {s.better=better.id;s.streak=0;s.sample=0;}
-    if (sample>s.sample) {s.sample=sample;s.streak=(s.streak || 0)+1;}
+    if (s.better!=better.id) {s.better=better.id;s.streak=0;s.sample_current=0;s.sample_candidate=0;}
+    if (current.checked>(s.sample_current || 0) && better.checked>(s.sample_candidate || 0)) {
+        s.sample_current=current.checked;s.sample_candidate=better.checked;s.streak=(s.streak || 0)+1;
+    }
     if (s.streak>=3 && now-s.last_switch>=300) {
         out.action='optimize';out.target=better.id;out.reason='better';
     }

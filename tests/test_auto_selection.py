@@ -27,6 +27,12 @@ class AutoSelection(unittest.TestCase):
         for checked in range(1,10):
             r=self.policy(state,health={'checked':checked,'proxy_ok':True});state=r['state'];self.assertIsNone(r['action'])
         self.assertEqual(state['streak'],1)
+    def test_asynchronous_observations_require_new_samples_from_both_nodes(self):
+        state=self.stable()
+        for checked,(current,candidate) in enumerate([(100,160),(160,160),(220,220),(220,280)],1):
+            data=self.sample();data['nodes'][0]['checked']=current;data['nodes'][1]['checked']=candidate
+            r=self.policy(state,health={'checked':checked,'proxy_ok':True},nodes=data['nodes']);state=r['state'];self.assertIsNone(r['action'])
+        self.assertEqual(state['streak'],2)
     def test_both_latency_thresholds_required(self):
         for latency in (151,170):
             data=self.sample();data['nodes'][1]['rtt_ms']=latency
