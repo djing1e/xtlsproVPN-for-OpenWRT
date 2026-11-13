@@ -19,12 +19,37 @@ function key_valid(s) {
     if (type(s) != 'string' || !match(s, /^[A-Za-z0-9_-]{43}$/)) return false;
     return length(b64dec(replace(replace(s, /-/g, '+'), /_/g, '/') + '=')) == 32;
 }
+function canonical(value,depth) {
+    depth=depth || 0;
+    if (depth>32) die('FinalMask nesting is too deep');
+    if (type(value)=='object') { let out={};for(let key in sort(keys(value)))out[key]=canonical(value[key],depth+1);return out; }
+    if (type(value)=='array') return map(value,v=>canonical(v,depth+1));
+    return value;
+}
+function final_mask(stream) {
+    if (stream.finalmask!=null && stream.finalMask!=null) die('Duplicate FinalMask configuration');
+    let mask=stream.finalmask ?? stream.finalMask;
+    if (mask==null) return null;
+    if (type(mask)!='object' || length(sprintf('%J',mask))>65536) die('Invalid or oversized FinalMask object');
+    for (let key in keys(mask)) if (index(['tcp','udp','quicParams'],key)<0) die('Unsupported FinalMask field');
+    for (let protocol in ['tcp','udp']) if (mask[protocol]!=null) {
+        if (type(mask[protocol])!='array' || length(mask[protocol])>32) die('Invalid FinalMask mask list');
+        for (let item in mask[protocol]) {
+            if (type(item)!='object' || type(item.type)!='string' || !match(item.type || '',/^[A-Za-z0-9_-]{1,64}$/)) die('Invalid FinalMask mask type');
+            for (let key in keys(item)) if (index(['type','settings'],key)<0) die('Unsupported FinalMask mask field');
+            if (item.settings!=null && type(item.settings)!='object') die('Invalid FinalMask settings');
+        }
+    }
+    if (mask.quicParams!=null && type(mask.quicParams)!='object') die('Invalid FinalMask QUIC parameters');
+    return canonical(mask);
+}
 function normalize(o, name) {
     if (type(o) != 'object' || o.protocol != 'vless') die('Only VLESS is supported');
     let next = o.settings?.vnext;
     if (type(next) != 'array' || length(next) != 1 || length(next[0].users || []) != 1)
         die('Expected one VLESS endpoint and one user');
     let n = next[0], u = n.users[0], s = o.streamSettings || {}, r = s.realitySettings || {};
+    const mask=final_mask(s);
     let host = '' + (n.address || '');
     if (!(ip.valid_ip(host) || (length(host) <= 253 && match(host, /^[A-Za-z0-9][A-Za-z0-9.-]*$/)))) die('Invalid server address');
     if (type(n.port) != 'int' || n.port < 1 || n.port > 65535) die('Invalid server port');
@@ -67,8 +92,11 @@ function normalize(o, name) {
         }
         let outbound={tag:'proxy',protocol:'vless',settings:{vnext:[{address:host,port:n.port,
             users:[{id:lc(u.id),encryption,flow:''}]}]},streamSettings:stream};
+        if (mask!=null) stream.finalmask=mask;
         // Paths and transport distinguish hosts sharing the same address and UUID.
-        let identity=sprintf('%J',[lc(host),n.port,lc(u.id),lc(sni),'xhttp',security,http_host,path,mode]);
+        let parts=[lc(host),n.port,lc(u.id),lc(sni),'xhttp',security,http_host,path,mode];
+        if (mask!=null) push(parts,'finalmask',mask);
+        let identity=sprintf('%J',parts);
         return {name:name || host,identity,outbound};
     }
     let pbk = r.password || r.publicKey || '';
@@ -86,8 +114,11 @@ function normalize(o, name) {
     let outbound = { tag: 'proxy', protocol: 'vless', settings: { vnext: [{ address: host, port: n.port,
         users: [{ id: lc(u.id), encryption, flow }] }] }, streamSettings: { network: 'raw', security: 'reality',
         realitySettings: { serverName: sni, fingerprint: fp, publicKey: pbk, shortId: lc(sid), spiderX: spx } } };
+    if (mask!=null) outbound.streamSettings.finalmask=mask;
     // Identity excludes display name and rotating keys. Full identity is compared, no hash collisions.
-    let identity = sprintf('%J', [lc(host), n.port, lc(u.id), lc(sni)]);
+    let parts=[lc(host), n.port, lc(u.id), lc(sni)];
+    if (mask!=null) push(parts,'finalmask',mask);
+    let identity = sprintf('%J', parts);
     return { name: name || host, identity, outbound };
 }
 function uri(line) {
@@ -103,14 +134,22 @@ function uri(line) {
         if (q[k] != null) die('Duplicate URI parameter');
         let raw = eq < 0 ? '' : substr(pair, eq + 1);
         // Form-encoded JSON may use + for spaces; literal + remains intact in keys/encryption/path.
-        q[k] = decode(k=='extra' ? replace(raw, /\+/g, ' ') : raw);
+        q[k] = decode(index(['extra','fm','finalmask','finalMask'],k)>=0 ? replace(raw, /\+/g, ' ') : raw);
     }
-    let allowed = ['encryption','flow','type','security','sni','fp','pbk','sid','spx','headerType','host','path','mode','extra','alpn','allowInsecure','insecure'];
+    let allowed = ['encryption','flow','type','security','sni','fp','pbk','sid','spx','headerType','host','path','mode','extra','alpn','allowInsecure','insecure','fm','finalmask','finalMask'];
     for (let k in keys(q)) if (index(allowed, k) < 0) die('Unsupported URI parameter');
     if (q.headerType && q.headerType != 'none') die('TCP header camouflage is unsupported');
     let transport=q.type || 'tcp';
     let stream={network:transport,security:q.security || '',realitySettings:{serverName:q.sni,
         fingerprint:q.fp,publicKey:q.pbk,shortId:q.sid,spiderX:q.spx}};
+    let masks=filter(['fm','finalmask','finalMask'],key=>q[key]!=null);
+    if (length(masks)>1) die('Duplicate FinalMask URI parameter');
+    if (length(masks)) {
+        let value=q[masks[0]];
+        if (length(value)>65536) die('Oversized FinalMask URI parameter');
+        try { stream.finalmask=json(value); } catch(error) { die('Invalid FinalMask JSON'); }
+        if (type(stream.finalmask)!='object') die('Invalid FinalMask object');
+    }
     if (transport=='xhttp' || transport=='splithttp') {
         let x={host:q.host || '',path:q.path || '/',mode:q.mode || 'auto'};
         if (q.extra) {
