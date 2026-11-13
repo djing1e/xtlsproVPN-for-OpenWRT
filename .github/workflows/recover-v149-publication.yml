@@ -1,0 +1,41 @@
+name: Recover verified v1.4.9 publication
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/recover-v149-publication.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    concurrency:
+      group: publish-v149
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: bdb1d8eddbbf5bd161ba4c8b175cc415b05c95c0
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 43450673502
+          name: xtlsprovpn-1.4.9-openwrt-25.12.5-arm64
+          path: dist
+      - name: Bind tag and publish the original SDK artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          repo=djing1e/xtlsproVPN-for-OpenWRT
+          source=bdb1d8eddbbf5bd161ba4c8b175cc415b05c95c0
+          if gh api "repos/$repo/git/ref/tags/v1.4.9" > "$RUNNER_TEMP/tag.json" 2> "$RUNNER_TEMP/tag.err"; then
+            test "$(gh api "repos/$repo/commits/v1.4.9" --jq .sha)" = "$source"
+          else
+            # Creating an existing tag fails; never move or replace a tag.
+            gh api --method POST "repos/$repo/git/refs" -f ref=refs/tags/v1.4.9 -f sha="$source"
+          fi
+          GITHUB_SHA="$source" GITHUB_REF=refs/heads/main bash scripts/publish-v149.sh
