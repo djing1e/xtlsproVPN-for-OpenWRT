@@ -1,6 +1,10 @@
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
-const source=fs.readFileSync('package/xtlsprovpn/files/www/luci-static/resources/view/xray/lab_148.js','utf8');
+const root='package/xtlsprovpn/files/';
+const menu=JSON.parse(fs.readFileSync(root+'usr/share/luci/menu.d/luci-app-forkop-xray.json','utf8'));
+const dashboard=fs.readFileSync(root+'www/luci-static/resources/view/'+menu['admin/services/forkop-xray/dashboard'].action.path+'.js','utf8');
+const helper=dashboard.match(/require view\.xray\.(lab_[0-9]+) as lab/)[1];
+const source=fs.readFileSync(root+'www/luci-static/resources/view/xray/'+helper+'.js','utf8');
 function E(tag,attrs={},children=[]) {
     return {tag,attrs,children:Array.isArray(children)?children:[children],isConnected:false,
         appendChild(n){this.children.push(n);n.parent=this;n.isConnected=true;},

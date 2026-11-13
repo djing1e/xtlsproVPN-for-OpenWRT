@@ -8,9 +8,10 @@ on:
   pull_request:
     paths:
       - 'integrations/router-bot/**'
-      - 'package/xtlsprovpn/files/usr/share/xray/lab/**'
-      - 'package/xtlsprovpn/files/usr/lib/forkop-xray/**'
-      - 'tests/test_installed_version.py'
+      - 'package/xtlsprovpn/**'
+      - 'scripts/**'
+      - 'tests/**'
+      - '.github/workflows/build.yml'
       - '.github/workflows/router-bot.yml'
   workflow_dispatch:
 permissions:

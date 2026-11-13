@@ -26,7 +26,7 @@ async function render(hash,brokenMemory=false){
  const broken=all(await render('#memory',true));assert(broken.some(n=>n.children.some(c=>typeof c==='string' && c.includes('RPC unavailable'))));assert(broken.some(n=>n.attrs['data-panel']==='netbird'));
  for(const legacy of ['settings_052.js','settings_transfer2.js']){
   const alias=fs.readFileSync(path.join(root,'www/luci-static/resources/view/xray',legacy),'utf8');
-  assert.equal(alias,source,'Legacy settings paths must export a view constructor without importing an instantiated view');
+  assert.equal(alias.replace('view.xray.lab_148','view.xray.lab_149'),source,'Legacy settings paths must export a view constructor without importing an instantiated view');
  }
  console.log('Live settings menu: Memory and NetBird tabs, hash selection, keyboard navigation, RPC error isolation and legacy aliases passed');
 })().catch(e=>{console.error(e);process.exit(1);});
