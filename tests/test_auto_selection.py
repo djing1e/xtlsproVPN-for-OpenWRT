@@ -16,6 +16,10 @@ class AutoSelection(unittest.TestCase):
     def stable(self):return dict(pid=42,current='cfgaaaaaa',last_switch=0,pinned=True)
     def test_first_sample_pins_existing_selection(self):
         r=self.policy();self.assertEqual((r['action'],r['target']),('pin','cfgaaaaaa'))
+    def test_cold_monitor_counts_the_first_failed_health_sample(self):
+        r=self.policy(health={'checked':100,'proxy_ok':False});self.assertEqual(r['action'],'pin')
+        state=r['state'];state['pinned']=True
+        r=self.policy(state,health={'checked':101,'proxy_ok':False});self.assertEqual(r['action'],'failover')
     def test_three_distinct_measurements_and_five_minutes_required(self):
         state=self.stable();state['last_switch']=900
         for stamp in (100,160,220):

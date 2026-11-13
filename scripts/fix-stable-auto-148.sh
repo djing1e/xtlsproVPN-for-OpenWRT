@@ -31,7 +31,7 @@ cleanup() {
 trap cleanup EXIT
 cat > "$work/manifest" <<'MANIFEST'
 8039f53b4d31e5ed8c6bc355b2f9ecc2d60172b53a0588062a3185acbad30ce2 8039f53b4d31e5ed8c6bc355b2f9ecc2d60172b53a0588062a3185acbad30ce2 ff843939ca3ed7239f1a5a261890d565d8820d35865367a58a3fb8e193564558 usr/bin/xray-lab-control
-- - f660d68cd0d53a18375f91d749bd1475589d1a2190b69867c1e9157fdcc5363c usr/share/xray/lab/auto_policy.mjs
+- - f8831b28d9e56038e1c5a3d9f2ca7d1e0611ef7f128106df412c9aef097abb67 usr/share/xray/lab/auto_policy.mjs
 - - 14bd9e78b8a2b32c804461c9fd0b1cbf85bbf26ec0ebfd58b53adddaf058c477 usr/share/xray/lab/auto_runtime.mjs
 - - ec88cb5d41c8b8ef4e3adaf01cab799110b8bd30e7078a939e069c24eea20278 usr/share/xray/lab/auto_select.uc
 4f235942f851fd6654fa7640f1ef6d7343a2f7561c2e1eaa5f458518593dceb9 4f235942f851fd6654fa7640f1ef6d7343a2f7561c2e1eaa5f458518593dceb9 c0ec672fce721a2cc86188c76da6cdc35cb3bf246b823507977afc87f613ee0c usr/share/xray/lab/control.uc

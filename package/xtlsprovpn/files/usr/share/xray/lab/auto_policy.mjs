@@ -6,7 +6,7 @@ export function auto_decide(previous, input) {
     const nodes=filter(input.nodes || [],n=>match(n.id || '',/^cfg[a-f0-9]{6}$/));
     const current=filter(nodes,n=>n.id==input.active)[0];
     if (s.pid!=input.pid || s.current!=input.active) {
-        s={pid:input.pid,current:input.active,failures:0,last_switch:now};out.state=s;
+        s={pid:input.pid,current:input.active,failures:input.health?.proxy_ok===false?1:0,health_checked:input.health?.checked,last_switch:now};out.state=s;
         if(current){out.action='pin';out.target=current.id;return out;}
     }
     if (!current && input.health?.proxy_ok===true) {out.reason='selection_unknown';return out;}
