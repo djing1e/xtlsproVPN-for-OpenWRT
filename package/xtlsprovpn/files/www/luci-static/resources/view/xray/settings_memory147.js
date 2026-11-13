@@ -10,7 +10,7 @@
 'require form';
 'require uci';
 'require tools.widgets as widgets';
-'require view.xray.lab_052 as lab';
+'require view.xray.lab_148 as lab';
 'require view.xray.routing_panel as routingPanel';
 
 return view.extend({
