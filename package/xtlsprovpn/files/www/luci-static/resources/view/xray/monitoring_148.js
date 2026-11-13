@@ -28,8 +28,9 @@ return view.extend({
                 group('Состояние',[
                     row('Прокси',s.direct_mode?'Прямой режим':s.core?.running?'Работает':'Остановлен',s.core?.running?'PID '+s.core.pid:null),
                     row('Интерфейс',s.interface.name+' / '+s.interface.device,s.interface.up?'Поднят':'Выключен'),
-                    row('HTTPS через прокси',h?(h.proxy_ok?'OK':'Ошибка'):'Ожидание проверки',h?lab.date(h.checked):'Проверка каждые 60 секунд'),
+                    row('HTTPS через прокси',h?(h.proxy_ok?'OK':'Ошибка'):'Ожидание проверки',h?lab.date(h.checked):'Отдельная проверка каждые '+(s.health_interval || 10)+' с'),
                     row('Память процесса',lab.bytes(s.core?.rss || 0)),
+                    row('Автовыбор',s.mode==='auto'?'С удержанием локации':'Ручной режим',s.mode==='auto'?'Улучшение: 20% и 50 мс, 3 замера; пауза 5 минут. Отказ обрабатывается отдельно.':null),
                     row('Маршрутизация',s.direct_mode?'Прямой интернет':s.routing?.profile==='roscomvpn'?'Раздельная':'Через прокси'),
                     row('Профиль источника',lab.date(s.routing?.upstream)),
                     row('GeoIP · версия Git',fileDate(s.routing?.geoip_version),s.routing?.geoip_version),

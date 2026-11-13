@@ -20,8 +20,10 @@ return view.extend({
         const section=map.section(form.NamedSection,'general','general');
         let o=section.option(form.Value,'fx_probe_url','URL проверки задержки','HTTPS-страница, отвечающая HTTP 204.');
         o.rmempty=false;o.validate=(sid,v)=>/^https:\/\/[^\s]+$/i.test(v)?true:'Требуется HTTPS-адрес.';
-        o=section.option(form.Value,'fx_probe_interval','Интервал проверки локаций, секунд');o.datatype='range(30,3600)';o.rmempty=false;
-        o=section.option(form.Flag,'fx_watchdog_enabled','Мониторинг интерфейса / watchdog');o.rmempty=false;
+        o=section.option(form.Value,'fx_probe_interval','Фоновые замеры локаций, секунд','Измеряют задержки всех нод. Отказ текущего соединения проверяется отдельно.');o.datatype='range(30,3600)';o.rmempty=false;
+        o=section.option(form.Value,'fx_health_interval','Проверка текущего соединения, секунд',
+            'Две последовательные ошибки запускают поиск резерва. Небольшие колебания пинга не меняют локацию. Улучшение: от 20% и 50 мс, три замера, пауза 5 минут.');o.default='10';o.datatype='range(5,60)';o.rmempty=false;
+        o=section.option(form.Flag,'fx_watchdog_enabled','Мониторинг, стабильный автовыбор и восстановление','При выключении автоматическая смена локаций и переход на прямой интернет не выполняются.');o.rmempty=false;
         o=section.option(widgets.NetworkSelect,'fx_watch_interface','Наблюдаемый интерфейс',
             'На текущем тестовом роутере интернет проходит через LAN. При обычной схеме выберите WAN / PPPoE.');
         o.nocreate=true;o.multiple=false;o.rmempty=false;

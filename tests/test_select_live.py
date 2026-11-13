@@ -9,10 +9,10 @@ with (r/'calls').open('a') as f:f.write(json.dumps([name,*a])+'\n')
 if name=='curl':
  print('000' if os.environ.get('SCENARIO')=='failed-https' else '204');sys.exit(0)
 if a[:2]==['api','bi']:
- target=(r/'override').read_text();tag='fx_node:cfgbbbbbb' if a[-1]=='fx_auto_pool' else 'fx_node:cfgaaaaaa'
+ target=(r/('pool' if a[-1]=='fx_auto_pool' else 'override')).read_text();tag='fx_node:cfgbbbbbb' if a[-1]=='fx_auto_pool' else 'fx_node:cfgaaaaaa'
  print(json.dumps({'balancer':{'override':{'target':target},'principleTarget':{'tag':[tag]}}}))
 elif a[:2]==['api','bo']:
- (r/'override').write_text('' if a[-1]=='-r' else a[-1])
+ (r/('pool' if a[a.index('-b')+1]=='fx_auto_pool' else 'override')).write_text('' if a[-1]=='-r' else a[-1])
  if os.environ.get('SCENARIO')=='api-timeout' and not (r/'timed-out').exists():
   (r/'timed-out').touch();sys.exit(1)
 else:raise RuntimeError(a)
@@ -30,7 +30,7 @@ class SelectLive(unittest.TestCase):
   self.runtime=self.r/'live.json';self.runtime.write_text(json.dumps(self.live));self.core=self.r/'core';self.core.write_text('old-selection')
   self.stage=self.r/'stage';self.stage.mkdir();(self.stage/'xray_core').write_text('new-selection')
   self.candidate=copy.deepcopy(self.live);self.candidate['routing']['balancers'][0]['selector']=['fx_node:cfgbbbbbb']
-  (self.stage/'config.json').write_text(json.dumps(self.candidate));(self.r/'override').write_text('fx_node:cfgaaaaaa')
+  (self.stage/'config.json').write_text(json.dumps(self.candidate));(self.r/'override').write_text('fx_node:cfgaaaaaa');(self.r/'pool').write_text('')
   source=(FILES/'usr/share/xray/lab/select_live.uc').read_text().replace('/usr/libexec/forkop-xray/xray',str(self.bin/'xray')).replace('/var/etc/xray/config.json',str(self.runtime)).replace('/etc/config/xray_core',str(self.core)).replace('/var/run/xray-lab-control/selection.json',str(self.r/'selection.json'))
   self.script=self.r/'select.uc';self.script.write_text(source)
  def call(self,location='cfgbbbbbb',scenario='ok'):

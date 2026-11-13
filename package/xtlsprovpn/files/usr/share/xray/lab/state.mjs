@@ -141,7 +141,8 @@ export function snapshot() {
     const override=bi?.balancer?.override?.target;
     const auto_info=override=='fx_auto'?asjson(['/usr/libexec/forkop-xray/xray','api','bi','--timeout=1','--json','fx_auto_pool']):null;
     const chosen=auto_info || bi;
-    const selected=override && override!='fx_auto'?[override]:chosen?.balancer?.principleTarget?.tag || chosen?.balancer?.principle_target?.tag || [];
+    const effective_override=auto_info?.balancer?.override?.target || override;
+    const selected=effective_override && effective_override!='fx_auto'?[effective_override]:chosen?.balancer?.principleTarget?.tag || chosen?.balancer?.principle_target?.tag || [];
     let nodes=[];
     const manual=load(run_dir+'/latency.json') || {};
     const runtime=load('/var/etc/xray/config.json') || {};
@@ -175,7 +176,7 @@ export function snapshot() {
     } catch(e) {}
     const diagnostic=load(run_dir+'/diagnostics.json') || {};
     const routing=g.fx_routing=='roscomvpn'?(load('/usr/share/xray/roscomvpn/profile.json') || {}):{};
-    return {version:installed_version(),selection_history:load(run_dir+'/selection-events.json')?.events || [],routing:{profile:g.fx_routing || 'all-proxy',updated:positive_number(routing._router_updated),upstream:positive_number(int(routing.LastUpdated)),geoip_version:match(routing.Geoipurl || '',/@([0-9]{12})\//)?.[1] || null,geosite_version:match(routing.Geositeurl || '',/@([0-9]{12})\//)?.[1] || null},diagnostics_checked:diagnostic.checked || null,diagnostics_summary:{job_id:diagnostic.job_id,errors:length(filter(diagnostic.checks || [],c=>c.state=='error')),pending:length(filter(diagnostic.checks || [],c=>c.state=='pending'))},subscription:subscription(),updates:{lists:list_updated(),subscription:update_history('subscription'),routing:update_history('routing')},time:now,uptime:uptime(),enabled:g.transparent_proxy_enable=='1',direct_mode:fs.stat(run_dir+'/direct-mode')!=null,direct_ready:fs.stat(run_dir+'/direct-mode.ready')!=null,
+    return {version:installed_version(),auto_selection:load(run_dir+'/auto-selection.json') || {},health_interval:max(5,min(60,int(g.fx_health_interval || 10))),selection_history:load(run_dir+'/selection-events.json')?.events || [],routing:{profile:g.fx_routing || 'all-proxy',updated:positive_number(routing._router_updated),upstream:positive_number(int(routing.LastUpdated)),geoip_version:match(routing.Geoipurl || '',/@([0-9]{12})\//)?.[1] || null,geosite_version:match(routing.Geositeurl || '',/@([0-9]{12})\//)?.[1] || null},diagnostics_checked:diagnostic.checked || null,diagnostics_summary:{job_id:diagnostic.job_id,errors:length(filter(diagnostic.checks || [],c=>c.state=='error')),pending:length(filter(diagnostic.checks || [],c=>c.state=='pending'))},subscription:subscription(),updates:{lists:list_updated(),subscription:update_history('subscription'),routing:update_history('routing')},time:now,uptime:uptime(),enabled:g.transparent_proxy_enable=='1',direct_mode:fs.stat(run_dir+'/direct-mode')!=null,direct_ready:fs.stat(run_dir+'/direct-mode.ready')!=null,
         mode:g.fx_mode || 'manual',location:g.fx_location || '',core:{running:pid!=null,pid:pid || null,version,
             rss:mem('VmRSS',proc),peak:mem('VmHWM',proc)},
         memory:{total:mem('MemTotal',memory),available:mem('MemAvailable',memory)},flow_offloading,
@@ -210,8 +211,8 @@ function direct_resolve(url) {
     }
     return null;
 }
-export function probe(port,url) {
-    let args=['curl','--silent','--connect-timeout','5','--max-time','10','--proto','=https',
+export function probe(port,url,timeout) {
+    let args=['curl','--silent','--connect-timeout','5','--max-time',''+(timeout || 10),'--proto','=https',
         '--noproxy',port?'':'*','--output',run_dir+'/probe.body','--write-out','%{http_code} %{time_total}'];
     if (port) push(args,'--proxy','socks5h://127.0.0.1:'+port);
     else {
@@ -225,13 +226,13 @@ export function probe(port,url) {
     const elapsed=match(parts[1] || '',/^[0-9]+\.[0-9]+$/)?json(parts[1]):0;
     return {alive:r.ok && parts[0]=='204',delay:int(elapsed*1000),http:parts[0] || '000',curl:r.code};
 };
-export function health_check() {
+export function health_check(pid,fast) {
     const g=config().general || {}, url=g.fx_probe_url || 'https://cp.cloudflare.com/generate_204';
     if (!match(url,/^https:\/\/[^[:space:]]+$/)) die('Invalid HTTPS probe URL');
     fs.mkdir(run_dir,0700);
-    const proxy=probe(11499,url), direct=proxy.alive?null:probe(null,url);
+    const proxy=probe(11499,url,fast?3:10), direct=proxy.alive || fast?null:probe(null,url);
     const result={checked:time(),proxy_ok:proxy.alive,delay:proxy.delay,http:proxy.http,
-        direct_ok:direct?.alive===true,direct_error:direct?.error || null,proxy_pid:snapshot().core.pid};
+        direct_checked:!fast && !proxy.alive,direct_ok:direct?.alive===true,direct_error:direct?.error || null,proxy_pid:pid || snapshot().core.pid};
     save(run_dir+'/health.json',result); return result;
 };
 export function latencies() {

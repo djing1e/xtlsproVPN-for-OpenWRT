@@ -7,6 +7,11 @@ mkdir -p "$RUN"
 chmod 700 "$RUN"
 case "${1:-status}" in
 status|job|diagnostics|logs) exec ucode "$UC" "$1" ;;
+auto-select)
+    exec 9>"$RUN/action.lock"
+    flock -n 9 || exit 0
+    exec ucode /usr/share/xray/lab/auto_select.uc
+    ;;
 launch)
     op=${2:-}
     location=${3:-}
@@ -153,7 +158,7 @@ watch-loop)
             case "$expires" in ''|*[!0-9]*) rm -rf "$cache";;
                 *) [ "$expires" -gt "$(date +%s)" ] || rm -rf "$cache";; esac
         )
-        sleep 15
+        sleep 5
     done
     ;;
 *) echo 'Usage: xray-lab-control status|diagnostics|logs|job|launch ACTION [LOCATION]'; exit 1 ;;
